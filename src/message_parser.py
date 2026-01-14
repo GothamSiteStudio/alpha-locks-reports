@@ -41,10 +41,10 @@ class MessageParser:
     # Regex patterns
     PHONE_PATTERN = re.compile(r'[\+]?1?\s*[\(\-]?\d{3}[\)\-\s]*\d{3}[\-\s]*\d{4}')
     
-    # Price patterns - various formats
-    TOTAL_CASH_PATTERN = re.compile(r'total\s*cash\s*\$?(\d+(?:\.\d{2})?)', re.IGNORECASE)
-    TOTAL_CHECK_PATTERN = re.compile(r'total\s*check\s*\$?(\d+(?:\.\d{2})?)', re.IGNORECASE)
-    TOTAL_CC_PATTERN = re.compile(r'total\s*(?:cc|credit|card)\s*\$?(\d+(?:\.\d{2})?)', re.IGNORECASE)
+    # Price patterns - various formats (supports "Total cash 510", "Total cash:510$", "Total cash: $510")
+    TOTAL_CASH_PATTERN = re.compile(r'total\s*cash\s*:?\s*\$?(\d+(?:\.\d{2})?)\$?', re.IGNORECASE)
+    TOTAL_CHECK_PATTERN = re.compile(r'total\s*check\s*:?\s*\$?(\d+(?:\.\d{2})?)\$?', re.IGNORECASE)
+    TOTAL_CC_PATTERN = re.compile(r'total\s*(?:cc|credit|card)\s*:?\s*\$?(\d+(?:\.\d{2})?)\$?', re.IGNORECASE)
     
     # Pattern for "XXX$ in cash" or "$XXX in cash" or "XXX in cash"
     PRICE_IN_CASH_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?cash', re.IGNORECASE)
@@ -62,6 +62,12 @@ class MessageParser:
     
     # Alpha job marker
     ALPHA_JOB_PATTERN = re.compile(r'alpha\s*job', re.IGNORECASE)
+    
+    # Labeled format patterns (Addr:, Ph:, Desc:, Occu:, date:)
+    ADDR_LABEL_PATTERN = re.compile(r'addr(?:ess)?\s*:\s*(.+)', re.IGNORECASE)
+    PHONE_LABEL_PATTERN = re.compile(r'ph(?:one)?\s*:\s*(.+)', re.IGNORECASE)
+    DESC_LABEL_PATTERN = re.compile(r'desc(?:ription)?\s*:\s*(.+)', re.IGNORECASE)
+    DATE_LABEL_PATTERN = re.compile(r'date\s*:\s*(.+)', re.IGNORECASE)
     
     # US Address pattern (simplified)
     ADDRESS_PATTERN = re.compile(
@@ -179,7 +185,12 @@ class MessageParser:
     
     def _extract_address(self, text: str, lines: List[str]) -> Optional[str]:
         """Extract address from text."""
-        # First try regex pattern
+        # First check for labeled format (Addr: or Address:)
+        match = self.ADDR_LABEL_PATTERN.search(text)
+        if match:
+            return match.group(1).strip()
+        
+        # Then try regex pattern for standard address format
         match = self.ADDRESS_PATTERN.search(text)
         if match:
             return match.group(0).strip()
@@ -258,6 +269,18 @@ class MessageParser:
     
     def _extract_phone(self, text: str) -> str:
         """Extract phone number."""
+        # First check for labeled format (Ph: or Phone:)
+        match = self.PHONE_LABEL_PATTERN.search(text)
+        if match:
+            # Extract phone from the labeled value
+            phone_value = match.group(1).strip()
+            # Try to find actual phone number in the value
+            phone_match = self.PHONE_PATTERN.search(phone_value)
+            if phone_match:
+                return phone_match.group(0).strip()
+            return phone_value
+        
+        # Standard phone pattern
         match = self.PHONE_PATTERN.search(text)
         if match:
             return match.group(0).strip()
@@ -265,6 +288,11 @@ class MessageParser:
     
     def _extract_description(self, text: str, address: str, phone: str) -> str:
         """Extract job description (text between address and phone/alpha job)."""
+        # First check for labeled format (Desc: or Description:)
+        match = self.DESC_LABEL_PATTERN.search(text)
+        if match:
+            return match.group(1).strip()
+        
         lines = text.split('\n')
         description_lines = []
         started = False
