@@ -51,12 +51,16 @@ class MessageParser:
     PRICE_IN_CASH_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?cash', re.IGNORECASE)
     PRICE_IN_CHECK_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?check', re.IGNORECASE)
     PRICE_IN_CC_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?(?:cc|credit|card)', re.IGNORECASE)
+    PRICE_IN_ZELLE_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?zelle', re.IGNORECASE)
     
     # Pattern for "$325 parts $10" (price with parts on same line)
     PRICE_WITH_PARTS_PATTERN = re.compile(r'\$(\d+(?:\.\d{2})?)\s*parts?\s*\$?(\d+(?:\.\d{2})?)', re.IGNORECASE)
     
-    # Standalone price ($446 or 446$) - more flexible
-    STANDALONE_PRICE_PATTERN = re.compile(r'^\s*\$(\d+(?:\.\d{2})?)\s*$|^\s*(\d+(?:\.\d{2})?)\$\s*$', re.MULTILINE)
+    # Standalone price ($446 or 446$) - more flexible, also handles just "400$" or "$400" on a line
+    STANDALONE_PRICE_PATTERN = re.compile(r'^\s*\$(\d+(?:\.\d{2})?)\s*$|^\s*(\d+(?:\.\d{2})?)\$?\s*$', re.MULTILINE)
+    
+    # Pattern for "Total XXX Zelle to Name" format
+    TOTAL_ZELLE_PATTERN = re.compile(r'total\s*\$?(\d+(?:\.\d{2})?)\$?\s*zelle', re.IGNORECASE)
     
     # Parts pattern - more flexible (parts $10, parts$10, part $10, part$15)
     PARTS_PATTERN = re.compile(r'parts?\s*\$?\s*(\d+(?:\.\d{2})?)', re.IGNORECASE)
@@ -230,6 +234,11 @@ class MessageParser:
         match = self.TOTAL_CC_PATTERN.search(text)
         if match:
             return float(match.group(1)), 'cc'
+        
+        # Check for "Total XXX Zelle" format
+        match = self.TOTAL_ZELLE_PATTERN.search(text)
+        if match:
+            return float(match.group(1)), 'check'  # Zelle is treated as check
         
         # Check for "$325 parts $10" format (price with parts on same line)
         match = self.PRICE_WITH_PARTS_PATTERN.search(text)
