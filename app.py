@@ -22,6 +22,20 @@ from auth_config import verify_password
 storage = JobStorage()
 
 
+def _parsed_job_to_state(pj) -> dict:
+    """Normalize ParsedJob objects into session-friendly dicts."""
+    return {
+        "address": pj.address,
+        "total": pj.total,
+        "parts": pj.parts,
+        "payment_method": pj.payment_method,
+        "description": pj.description,
+        "phone": pj.phone,
+        "job_date": pj.job_date.isoformat() if getattr(pj, "job_date", None) else "",
+        "technician_name": getattr(pj, "technician_name", "") or "",
+    }
+
+
 def login_page():
     """Display login page."""
     st.set_page_config(
@@ -128,10 +142,14 @@ Nodi"""
         # Initialize parsed jobs in session state
         if 'parsed_jobs' not in st.session_state:
             st.session_state.parsed_jobs = []
+        elif st.session_state.parsed_jobs and not isinstance(st.session_state.parsed_jobs[0], dict):
+            # Normalize legacy ParsedJob objects
+            st.session_state.parsed_jobs = [_parsed_job_to_state(pj) for pj in st.session_state.parsed_jobs]
         
         if parse_button and messages_text.strip():
             parser = MessageParser()
-            st.session_state.parsed_jobs = parser.parse_multiple_jobs(messages_text)
+            parsed = parser.parse_multiple_jobs(messages_text)
+            st.session_state.parsed_jobs = [_parsed_job_to_state(pj) for pj in parsed]
         
         # Show parsed jobs if available
         if st.session_state.parsed_jobs:
@@ -141,52 +159,90 @@ Nodi"""
             
             # Editable parsed jobs
             edited_jobs = []
-            for i, pj in enumerate(st.session_state.parsed_jobs):
-                with st.expander(f"Job {i+1}: {pj.total:.0f}$ - {pj.address[:40]}..." if len(pj.address) > 40 else f"Job {i+1}: {pj.total:.0f}$ - {pj.address}", expanded=True):
-                    col1, col2 = st.columns(2)
+            remove_indices = []
+            for i, pj_state in enumerate(st.session_state.parsed_jobs):
+                job_state = pj_state if isinstance(pj_state, dict) else _parsed_job_to_state(pj_state)
+                job_title = job_state.get("address", "")
+                job_total = job_state.get("total", 0)
+                title_text = f"Job {i+1}: {job_total:.0f}$ - {job_title[:40]}..." if len(job_title) > 40 else f"Job {i+1}: {job_total:.0f}$ - {job_title}"
+                with st.expander(title_text, expanded=True):
+                    col1, col2 = st.columns([3, 2])
                     
                     with col1:
-                        st.write(f"**Address:** {pj.address}")
-                        st.write(f"**Total:** ${pj.total:,.2f}")
-                        st.write(f"**Parts:** ${pj.parts:,.2f}")
-                        st.write(f"**Payment:** {pj.payment_method.upper()}")
+                        address_input = st.text_input("Address", value=job_state.get("address", ""), key=f"addr_{i}")
+                        description_input = st.text_area("Description", value=job_state.get("description", ""), key=f"desc_{i}", height=80)
+                        phone_input = st.text_input("Phone", value=job_state.get("phone", ""), key=f"phone_{i}")
                     
                     with col2:
-                        # Technician selection - use getattr for safety
-                        detected_tech = getattr(pj, 'technician_name', "") or ""
-                        
+                        # Decide initial technician
+                        detected_tech = job_state.get("technician_name", "")
                         if default_tech != "Auto-detect":
-                            tech_name = default_tech
+                            tech_default = default_tech
                         elif detected_tech:
-                            tech_name = detected_tech
+                            tech_default = detected_tech
                         else:
-                            tech_name = ""
-                        
+                            tech_default = ""
                         tech_input = st.text_input(
                             f"Technician for Job {i+1}",
-                            value=tech_name,
+                            value=tech_default,
                             key=f"tech_{i}",
-                            help="Detected: " + (detected_tech if detected_tech else "None")
+                            help=f"Detected: {detected_tech or 'None'}"
                         )
-                        
                         if detected_tech:
                             st.caption(f"🔍 Auto-detected: **{detected_tech}**")
+                        # Date per job (fallback to sidebar date)
+                        job_date_value = job_state.get("job_date")
+                        try:
+                            date_default = datetime.fromisoformat(job_date_value).date() if job_date_value else job_date
+                        except ValueError:
+                            date_default = job_date
+                        job_date_input = st.date_input("Job Date", value=date_default, key=f"job_date_{i}")
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        total_input = st.number_input("Total ($)", min_value=0.0, value=float(job_state.get("total", 0) or 0), step=10.0, key=f"total_{i}")
+                    with col_b:
+                        parts_input = st.number_input("Parts ($)", min_value=0.0, value=float(job_state.get("parts", 0) or 0), step=5.0, key=f"parts_{i}")
+                    with col_c:
+                        pay_method = (job_state.get("payment_method") or "cash").lower()
+                        payment_input = st.selectbox("Payment", ["cash", "check", "cc"], index=["cash", "check", "cc"].index(pay_method if pay_method in ["cash", "check", "cc"] else "cash"), key=f"payment_{i}")
+
+                    if st.button("🗑️ Remove this job", key=f"remove_{i}"):
+                        remove_indices.append(i)
                     
                     edited_jobs.append({
-                        'job': pj,
-                        'technician': tech_input
+                        "address": address_input.strip(),
+                        "total": total_input,
+                        "parts": parts_input,
+                        "payment_method": payment_input,
+                        "description": description_input.strip(),
+                        "phone": phone_input.strip(),
+                        "job_date": job_date_input.isoformat(),
+                        "technician_name": tech_input.strip(),
                     })
+            
+            if remove_indices:
+                st.session_state.parsed_jobs = [job for idx, job in enumerate(edited_jobs) if idx not in remove_indices]
+                st.success(f"Removed {len(remove_indices)} job(s) from the parsed list.")
+                st.rerun()
+            else:
+                st.session_state.parsed_jobs = edited_jobs
             
             # Save all jobs button
             st.markdown("---")
             if st.button("💾 Save All Jobs", type="primary"):
                 saved_count = 0
-                for item in edited_jobs:
-                    pj = item['job']
-                    tech_name = item['technician'].strip()
+                for job_data in edited_jobs:
+                    tech_name = job_data['technician_name'].strip()
                     
                     if not tech_name:
-                        st.warning(f"⚠️ Skipping job at {pj.address[:30]}... - no technician specified")
+                        st.warning(f"⚠️ Skipping job at {job_data['address'][:30]}... - no technician specified")
+                        continue
+                    if not job_data['address']:
+                        st.warning("⚠️ Skipping a job with empty address")
+                        continue
+                    if not job_data['total']:
+                        st.warning(f"⚠️ Skipping job at {job_data['address'][:30]}... - total is missing")
                         continue
                     
                     # Get or create technician
@@ -197,13 +253,13 @@ Nodi"""
                         id="",  # Will be auto-generated
                         technician_id=tech['id'],
                         technician_name=tech['name'],
-                        address=pj.address,
-                        total=pj.total,
-                        parts=pj.parts,
-                        payment_method=pj.payment_method,
-                        description=pj.description,
-                        phone=pj.phone,
-                        job_date=job_date.isoformat(),
+                        address=job_data['address'],
+                        total=job_data['total'],
+                        parts=job_data['parts'],
+                        payment_method=job_data['payment_method'],
+                        description=job_data['description'],
+                        phone=job_data['phone'],
+                        job_date=job_data['job_date'] or job_date.isoformat(),
                         created_at="",  # Will be auto-generated
                         is_paid=False,
                         commission_rate=commission_rate

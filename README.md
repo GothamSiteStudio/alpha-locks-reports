@@ -30,6 +30,18 @@ Balance = negative (Company owes tech)
 **Example:** $1000 CC payment, $50 parts, 50% commission
 - Tech receives: (1000 - 50) × 50% + 50 = $475 + $50 = **$525**
 
+## 🤖 Intelligent Job Parsing
+
+The system includes a sophisticated message parser `src/message_parser.py` that can:
+- Parse single or multiple job messages from WhatsApp/Text
+- Auto-detect:
+  - 📍 Address (extracts clean address, separates description)
+  - 💰 Pricing (Total, Parts, Payment Method)
+  - 👷 Technician Name (even from "Alpha Name" signatures)
+  - 📅 Dates and Timestamps
+- Handle various message formats and messy input
+- Cleanly separate job description from address details
+
 ---
 
 ## 🚀 Quick Start
