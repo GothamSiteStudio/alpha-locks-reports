@@ -1,12 +1,20 @@
 [
-    {
-        "id": "tech1",
-        "name": "Technician 1",
-        "commission_rate": 0.50
-    },
-    {
-        "id": "tech2",
-        "name": "Technician 2",
-        "commission_rate": 0.40
-    }
+  {
+    "id": "2947c8a7-efd1-49f2-b1d6-b1a5db6ab0fd",
+    "name": "Nodo",
+    "commission_rate": 0.5,
+    "created_at": "2026-01-14T11:27:12.486626"
+  },
+  {
+    "id": "82744cda-602d-430b-9af7-f06e2ec3be9e",
+    "name": "Meir",
+    "commission_rate": 0.5,
+    "created_at": "2026-01-14T11:27:12.532481"
+  },
+  {
+    "id": "ae186fb7-ee20-452a-a42f-72761f8ef62a",
+    "name": "Omri",
+    "commission_rate": 0.5,
+    "created_at": "2026-01-14T11:27:12.592558"
+  }
 ]

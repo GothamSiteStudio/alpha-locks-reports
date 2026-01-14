@@ -152,8 +152,8 @@ Nodi"""
                         st.write(f"**Payment:** {pj.payment_method.upper()}")
                     
                     with col2:
-                        # Technician selection
-                        detected_tech = pj.technician_name if pj.technician_name else ""
+                        # Technician selection - use getattr for safety
+                        detected_tech = getattr(pj, 'technician_name', "") or ""
                         
                         if default_tech != "Auto-detect":
                             tech_name = default_tech
@@ -565,59 +565,300 @@ def page_reports():
 
 
 def page_technicians():
-    """Page for managing technicians"""
-    st.header("👥 Manage Technicians")
+    """Page for managing technicians with detailed view"""
+    st.header("👥 Technicians")
     
     technicians = storage.get_all_technicians()
     
     if not technicians:
         st.info("📭 No technicians yet. They will be auto-created when you add jobs.")
-    else:
-        st.markdown("### Current Technicians")
+        return
+    
+    # Initialize selected technician in session state
+    if 'selected_tech_id' not in st.session_state:
+        st.session_state.selected_tech_id = None
+    
+    # Two-column layout: list on left, details on right
+    col_list, col_details = st.columns([1, 2])
+    
+    with col_list:
+        st.markdown("### 📋 Technicians List")
         
         for tech in technicians:
+            stats = storage.get_technician_stats(tech['id'])
+            
+            # Create a button for each technician
+            is_selected = st.session_state.selected_tech_id == tech['id']
+            button_type = "primary" if is_selected else "secondary"
+            
             with st.container():
-                col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
-                
-                with col1:
-                    st.markdown(f"### 👤 {tech['name']}")
-                
-                with col2:
-                    stats = storage.get_technician_stats(tech['id'])
-                    st.metric("Total Jobs", stats['total_jobs'])
-                
-                with col3:
-                    st.metric("Unpaid Jobs", stats['unpaid_jobs'])
-                
-                with col4:
-                    # Only allow deletion if no jobs
-                    if stats['total_jobs'] == 0:
-                        if st.button("🗑️", key=f"del_tech_{tech['id']}"):
-                            storage.delete_technician(tech['id'])
-                            st.success("Technician deleted!")
-                            st.rerun()
+                col_name, col_badge = st.columns([3, 1])
+                with col_name:
+                    if st.button(
+                        f"👤 {tech['name']}", 
+                        key=f"select_{tech['id']}", 
+                        type=button_type,
+                        use_container_width=True
+                    ):
+                        st.session_state.selected_tech_id = tech['id']
+                        st.rerun()
+                with col_badge:
+                    if stats['unpaid_jobs'] > 0:
+                        st.markdown(f"<span style='background-color: #ff4b4b; padding: 2px 8px; border-radius: 10px; color: white; font-size: 12px;'>{stats['unpaid_jobs']} unpaid</span>", unsafe_allow_html=True)
+        
+        st.markdown("---")
+        
+        # Add new technician
+        with st.expander("➕ Add New Technician"):
+            new_name = st.text_input("Name", key="new_tech_name")
+            new_commission = st.slider("Commission Rate (%)", 0, 100, 50, 5, key="new_tech_comm")
+            
+            if st.button("Add Technician", type="primary"):
+                if new_name.strip():
+                    existing = storage.get_technician_by_name(new_name)
+                    if existing:
+                        st.warning(f"'{new_name}' already exists!")
                     else:
-                        st.caption("Has jobs")
+                        storage.add_technician(new_name.strip(), new_commission / 100)
+                        st.success(f"Added: {new_name}")
+                        st.rerun()
+                else:
+                    st.error("Please enter a name")
+    
+    with col_details:
+        if st.session_state.selected_tech_id:
+            show_technician_details(st.session_state.selected_tech_id)
+        else:
+            st.info("👈 Select a technician to view details")
+
+
+def show_technician_details(tech_id: str):
+    """Show detailed view for a technician"""
+    tech = storage.get_technician_by_id(tech_id)
+    if not tech:
+        st.error("Technician not found")
+        return
+    
+    stats = storage.get_technician_stats(tech_id)
+    jobs = storage.get_jobs_by_technician(tech_id)
+    
+    # Header with technician name
+    st.markdown(f"## 👤 {tech['name']}")
+    
+    # Stats row
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Jobs", stats['total_jobs'])
+    with col2:
+        st.metric("Total Sales", f"${stats['total_sales']:,.0f}")
+    with col3:
+        st.metric("Unpaid Jobs", stats['unpaid_jobs'])
+    with col4:
+        st.metric("Unpaid Amount", f"${stats['unpaid_amount']:,.0f}")
+    
+    st.markdown("---")
+    
+    # Tabs for different views
+    tab_jobs, tab_report = st.tabs(["📋 Jobs", "📈 Generate Report"])
+    
+    with tab_jobs:
+        # Filter options
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            show_paid = st.checkbox("Show paid jobs", value=False, key=f"show_paid_{tech_id}")
+        with col_filter2:
+            date_filter = st.selectbox(
+                "Date Range",
+                ["All Time", "This Week", "This Month", "Last 30 Days"],
+                key=f"date_filter_{tech_id}"
+            )
+        
+        # Filter jobs
+        filtered_jobs = jobs
+        if not show_paid:
+            filtered_jobs = [j for j in filtered_jobs if not j.is_paid]
+        
+        # Date filtering
+        if date_filter == "This Week":
+            week_start = date.today() - timedelta(days=date.today().weekday())
+            filtered_jobs = [j for j in filtered_jobs if j.job_date >= week_start.isoformat()]
+        elif date_filter == "This Month":
+            month_start = date.today().replace(day=1)
+            filtered_jobs = [j for j in filtered_jobs if j.job_date >= month_start.isoformat()]
+        elif date_filter == "Last 30 Days":
+            start = date.today() - timedelta(days=30)
+            filtered_jobs = [j for j in filtered_jobs if j.job_date >= start.isoformat()]
+        
+        # Sort by date (newest first)
+        filtered_jobs.sort(key=lambda x: x.job_date, reverse=True)
+        
+        if not filtered_jobs:
+            st.info("No jobs found with current filters.")
+        else:
+            st.markdown(f"**{len(filtered_jobs)} jobs**")
+            
+            for job in filtered_jobs:
+                with st.container():
+                    col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
+                    
+                    with col1:
+                        status = "✅" if job.is_paid else "⏳"
+                        addr_display = job.address[:35] + "..." if len(job.address) > 35 else job.address
+                        st.markdown(f"{status} **{addr_display}**")
+                        st.caption(f"📅 {job.job_date}")
+                    
+                    with col2:
+                        st.markdown(f"**${job.total:,.0f}**")
+                        if job.parts > 0:
+                            st.caption(f"Parts: ${job.parts:,.0f}")
+                    
+                    with col3:
+                        if job.is_paid:
+                            if st.button("❌", key=f"unpay_{job.id}", help="Mark as unpaid"):
+                                storage.mark_job_unpaid(job.id)
+                                st.rerun()
+                        else:
+                            if st.button("✅", key=f"pay_{job.id}", help="Mark as paid"):
+                                storage.mark_job_paid(job.id)
+                                st.rerun()
+                    
+                    with col4:
+                        if st.button("🗑️", key=f"del_{job.id}", help="Delete job"):
+                            storage.delete_job(job.id)
+                            st.rerun()
                 
                 st.markdown("---")
-    
-    # Add new technician manually
-    st.markdown("### ➕ Add Technician Manually")
-    with st.form("add_tech_form"):
-        new_name = st.text_input("Name")
-        new_commission = st.slider("Default Commission Rate (%)", 0, 100, 50, 5)
-        
-        if st.form_submit_button("Add Technician"):
-            if new_name.strip():
-                existing = storage.get_technician_by_name(new_name)
-                if existing:
-                    st.warning(f"Technician '{new_name}' already exists!")
-                else:
-                    storage.add_technician(new_name.strip(), new_commission / 100)
-                    st.success(f"Added technician: {new_name}")
+            
+            # Bulk actions
+            st.markdown("#### ⚡ Bulk Actions")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Mark All as Paid", key=f"mark_all_paid_{tech_id}"):
+                    for job in filtered_jobs:
+                        if not job.is_paid:
+                            storage.mark_job_paid(job.id)
+                    st.success("All jobs marked as paid!")
                     st.rerun()
-            else:
-                st.error("Please enter a name")
+    
+    with tab_report:
+        st.markdown("### 📈 Generate Report")
+        
+        # Report options
+        col1, col2 = st.columns(2)
+        with col1:
+            report_start = st.date_input("From Date", value=date.today() - timedelta(days=30), key=f"rep_start_{tech_id}")
+        with col2:
+            report_end = st.date_input("To Date", value=date.today(), key=f"rep_end_{tech_id}")
+        
+        include_paid_report = st.checkbox("Include paid jobs in report", value=False, key=f"inc_paid_{tech_id}")
+        
+        commission_rate = st.slider(
+            "Commission Rate (%)",
+            min_value=0,
+            max_value=100,
+            value=int(tech.get('commission_rate', 0.5) * 100),
+            step=5,
+            key=f"comm_{tech_id}"
+        ) / 100
+        
+        # Get jobs for report
+        report_jobs = [j for j in jobs if report_start.isoformat() <= j.job_date <= report_end.isoformat()]
+        if not include_paid_report:
+            report_jobs = [j for j in report_jobs if not j.is_paid]
+        
+        report_jobs.sort(key=lambda x: x.job_date)
+        
+        if not report_jobs:
+            st.warning("No jobs found for selected criteria.")
+        else:
+            st.success(f"📋 Found **{len(report_jobs)}** jobs for report")
+            
+            # Summary
+            total_sales = sum(j.total for j in report_jobs)
+            total_parts = sum(j.parts for j in report_jobs)
+            net = total_sales - total_parts
+            tech_profit = net * commission_rate
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Sales", f"${total_sales:,.0f}")
+            with col2:
+                st.metric("Net (after parts)", f"${net:,.0f}")
+            with col3:
+                st.metric("Tech Profit", f"${tech_profit:,.0f}")
+            
+            st.markdown("---")
+            
+            # Convert to Job model for report
+            jobs_for_report = []
+            for sj in report_jobs:
+                job = Job(
+                    job_date=date.fromisoformat(sj.job_date),
+                    address=sj.address,
+                    total=sj.total,
+                    parts=sj.parts,
+                    payment_method=sj.payment_method,
+                    commission_rate=commission_rate,
+                    fee=0,
+                    cash_amount=sj.total if sj.payment_method == 'cash' else 0,
+                    cc_amount=sj.total if sj.payment_method == 'cc' else 0,
+                    check_amount=sj.total if sj.payment_method == 'check' else 0
+                )
+                jobs_for_report.append(job)
+            
+            technician_obj = Technician(
+                id=tech['id'],
+                name=tech['name'],
+                commission_rate=commission_rate
+            )
+            
+            # Generate reports
+            html_exporter = HTMLReportExporter(technician_obj)
+            html_exporter.add_jobs(jobs_for_report)
+            html_content = html_exporter.generate_html()
+            
+            timestamp = datetime.now().strftime('%Y%m%d')
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📄 Download HTML Report",
+                    data=html_content,
+                    file_name=f"{tech['name'].replace(' ', '_')}_{timestamp}.html",
+                    mime="text/html",
+                    key=f"dl_html_{tech_id}"
+                )
+            
+            with col2:
+                generator = ReportGenerator(technician_obj)
+                generator.add_jobs(jobs_for_report)
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                    tmp_path = tmp.name
+                generator.export_excel(tmp_path)
+                with open(tmp_path, 'rb') as f:
+                    excel_data = f.read()
+                try:
+                    Path(tmp_path).unlink()
+                except:
+                    pass
+                
+                st.download_button(
+                    label="📊 Download Excel Report",
+                    data=excel_data,
+                    file_name=f"{tech['name'].replace(' ', '_')}_{timestamp}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"dl_excel_{tech_id}"
+                )
+            
+            st.markdown("---")
+            
+            if not include_paid_report:
+                if st.button("✅ Mark All Jobs in Report as Paid", type="primary", key=f"mark_report_paid_{tech_id}"):
+                    for sj in report_jobs:
+                        storage.mark_job_paid(sj.id)
+                    st.success(f"Marked {len(report_jobs)} jobs as paid!")
+                    st.rerun()
 
 
 def main():

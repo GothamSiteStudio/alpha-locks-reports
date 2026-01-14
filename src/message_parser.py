@@ -155,15 +155,19 @@ class MessageParser:
             if re.match(r'alpha\s*job', part, re.IGNORECASE):
                 # This is the marker, add it to current block and save
                 current_block += part
-                # Look for pricing info after the marker
+                # Look for pricing info AND technician name after the marker
                 if i + 1 < len(parts):
-                    # Get the next part and extract only the pricing info
+                    # Get the next part and extract pricing info + technician name
                     next_part = parts[i + 1]
-                    pricing_lines = []
+                    job_ending_lines = []
+                    found_pricing = False
+                    found_tech_section = False
+                    
                     for line in next_part.split('\n'):
-                        line_stripped = line.strip()
+                        line_stripped = line.strip().lower()
+                        
                         # Check if this line contains pricing info
-                        if (self.TOTAL_CASH_PATTERN.search(line) or
+                        is_pricing = (self.TOTAL_CASH_PATTERN.search(line) or
                             self.TOTAL_CHECK_PATTERN.search(line) or
                             self.TOTAL_CC_PATTERN.search(line) or
                             self.TOTAL_ZELLE_PATTERN.search(line) or
@@ -172,16 +176,51 @@ class MessageParser:
                             self.PRICE_IN_CC_PATTERN.search(line) or
                             self.PRICE_IN_ZELLE_PATTERN.search(line) or
                             self.STANDALONE_PRICE_PATTERN.search(line) or
-                            self.PARTS_PATTERN.search(line) or
-                            line_stripped == ''):
-                            pricing_lines.append(line)
-                        else:
-                            # This is the start of a new job
+                            self.PARTS_PATTERN.search(line))
+                        
+                        if is_pricing:
+                            found_pricing = True
+                            job_ending_lines.append(line)
+                            continue
+                        
+                        # Empty line - continue
+                        if line_stripped == '':
+                            job_ending_lines.append(line)
+                            continue
+                        
+                        # "Alpha" alone (company name before technician)
+                        if line_stripped == 'alpha':
+                            found_tech_section = True
+                            job_ending_lines.append(line)
+                            continue
+                        
+                        # If we found "Alpha", the next non-empty line is the technician name
+                        if found_tech_section and line_stripped:
+                            # Check if this looks like a new job (timestamp, address)
+                            if re.match(r'^\[?\d{1,2}:\d{2}', line.strip()):
+                                # This is a timestamp - new job starts
+                                break
+                            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_stripped, re.IGNORECASE):
+                                # This is an address - new job starts
+                                break
+                            # This is the technician name
+                            job_ending_lines.append(line)
+                            # After technician name, we're done with this job
                             break
+                        
+                        # If we found pricing but not "Alpha" section, check if this could be tech name
+                        if found_pricing and not found_tech_section:
+                            # If it's a simple word (potential name), include it
+                            if re.match(r'^[a-zA-Z]+$', line.strip()) and len(line.strip()) < 20:
+                                job_ending_lines.append(line)
+                                break
+                            else:
+                                # This is the start of a new job
+                                break
                     
-                    current_block += '\n'.join(pricing_lines)
-                    # Update the next part to remove the pricing info we used
-                    remaining_lines = next_part.split('\n')[len(pricing_lines):]
+                    current_block += '\n'.join(job_ending_lines)
+                    # Update the next part to remove what we used
+                    remaining_lines = next_part.split('\n')[len(job_ending_lines):]
                     parts[i + 1] = '\n'.join(remaining_lines)
                 
                 job_blocks.append(current_block)
@@ -378,13 +417,26 @@ class MessageParser:
     def _extract_technician_name(self, text: str) -> str:
         """
         Extract technician name from the message.
-        The technician name is always the last non-empty line of the message
-        that is not pricing info, 'alpha', or other metadata.
+        The technician name appears at the very end of the message, after:
+        - Alpha job marker
+        - Pricing info (Total, Parts)
+        - "Alpha" company name
+        
+        Format example:
+        ...
+        Alpha job
+        Total cash 500
+        Parts 75$
+        
+        Alpha
+        Omri  <-- This is the technician name
         """
         lines = text.strip().split('\n')
         
-        # Words/patterns to skip (not technician names)
-        skip_patterns = [
+        # Find where pricing info ends - look for the last pricing line
+        last_pricing_index = -1
+        
+        pricing_patterns = [
             self.TOTAL_CASH_PATTERN,
             self.TOTAL_CHECK_PATTERN,
             self.TOTAL_CC_PATTERN,
@@ -395,48 +447,87 @@ class MessageParser:
             self.PRICE_IN_ZELLE_PATTERN,
             self.STANDALONE_PRICE_PATTERN,
             self.PARTS_PATTERN,
-            self.PHONE_PATTERN,
         ]
         
-        skip_words = ['alpha', 'job', 'alpha job', 'parts', 'total', '$']
-        
-        # Go through lines from the end
-        for line in reversed(lines):
-            line_stripped = line.strip().lower()
+        for i, line in enumerate(lines):
+            line_lower = line.strip().lower()
             
-            # Skip empty lines
+            # Check for pricing patterns
+            for pattern in pricing_patterns:
+                if pattern.search(line):
+                    last_pricing_index = i
+                    break
+            
+            # Also check for "alpha" alone (company name marker before tech name)
+            if line_lower == 'alpha':
+                last_pricing_index = i
+        
+        # Now look for technician name AFTER the last pricing/alpha line
+        if last_pricing_index >= 0:
+            # Search from after the last pricing line
+            for line in lines[last_pricing_index + 1:]:
+                line_stripped = line.strip()
+                line_lower = line_stripped.lower()
+                
+                # Skip empty lines
+                if not line_stripped:
+                    continue
+                
+                # Skip "alpha" word
+                if line_lower == 'alpha':
+                    continue
+                
+                # Skip if it's an address
+                if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_lower, re.IGNORECASE):
+                    continue
+                
+                # Skip timestamp patterns like [9:38 PM, 1/7/2026]
+                if re.match(r'^\[?\d{1,2}:\d{2}', line_stripped):
+                    continue
+                
+                # This should be the technician name
+                return line_stripped.title()
+        
+        # Fallback: search from the end for any valid name
+        skip_words = ['alpha', 'job', 'alpha job', 'parts', 'total', '$', 'oren']
+        
+        for line in reversed(lines):
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+            
             if not line_stripped:
                 continue
             
-            # Skip if matches any pricing pattern
+            # Skip pricing patterns
             skip = False
-            for pattern in skip_patterns:
+            for pattern in pricing_patterns:
                 if pattern.search(line):
                     skip = True
                     break
-            
             if skip:
                 continue
             
-            # Skip common words that aren't names
-            if line_stripped in skip_words:
+            # Skip common words
+            if line_lower in skip_words:
                 continue
             
-            # Skip if line contains only numbers or special characters
-            if re.match(r'^[\d\$\.\,\s\+\-\(\)]+$', line_stripped):
+            # Skip numbers and special chars
+            if re.match(r'^[\d\$\.\,\s\+\-\(\)]+$', line_lower):
                 continue
             
-            # Skip if it's an address (contains street suffixes and numbers)
-            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_stripped, re.IGNORECASE):
+            # Skip addresses
+            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_lower, re.IGNORECASE):
                 continue
             
-            # Skip if it looks like "Total XXX" pattern
-            if line_stripped.startswith('total'):
+            # Skip phone numbers
+            if self.PHONE_PATTERN.search(line):
                 continue
             
-            # This should be the technician name
-            # Return with original capitalization
-            return line.strip().title()  # Title case the name
+            # Skip timestamps
+            if re.match(r'^\[?\d{1,2}:\d{2}', line_stripped):
+                continue
+            
+            return line_stripped.title()
         
         return ""
 

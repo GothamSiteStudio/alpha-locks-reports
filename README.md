@@ -52,12 +52,46 @@ Navigate to `http://localhost:8501`
 ## 📊 Features
 
 - ✅ **Web Interface** - Easy-to-use Streamlit app
+- ✅ **Paste Messages** - Parse job closure messages automatically
+- ✅ **Labeled Format Support** - Parse messages with labels (Addr:, Ph:, Desc:, date:, Total cash:)
 - ✅ **Excel Import** - Upload job data from Excel/CSV files
 - ✅ **Manual Entry** - Add jobs one by one
 - ✅ **HTML Reports** - Beautiful reports styled like professional invoices
 - ✅ **Excel Export** - Download data as Excel spreadsheet
 - ✅ **Auto Calculation** - Instant commission and balance calculations
 - ✅ **Summary View** - Total jobs, sales, profit, and balance at a glance
+
+---
+
+## 📋 Supported Message Formats
+
+### Format 1: Labeled Format (New!)
+```
+date:1/5/26
+Ph: 9175003599
+Addr: 36 N Goodwin Ave, Elmsford, NY, 10523
+Desc: Home Lockout
+Occu: Locksmith
+
+Total cash:510$
+```
+
+### Format 2: Standard Format
+```
+36 N Goodwin Ave, Elmsford, NY 10523
+Home Lockout
+(917) 500-3599
+alpha job
+$510
+Parts $15
+```
+
+### Format 3: Simple Format
+```
+123 Main St, New York, NY 10001
+Total cash 450
+Parts 20
+```
 
 ---
 
