@@ -15,6 +15,7 @@ class ParsedJob:
     description: str = ""
     phone: str = ""
     job_date: Optional[date] = None
+    technician_name: str = ""  # Auto-detected technician name
     
 
 class MessageParser:
@@ -116,6 +117,9 @@ class MessageParser:
         # Find description (lines between address and phone/alpha job)
         description = self._extract_description(text, address, phone)
         
+        # Find technician name (last non-empty line that's not pricing info)
+        technician_name = self._extract_technician_name(text)
+        
         return ParsedJob(
             address=address,
             total=total,
@@ -123,7 +127,8 @@ class MessageParser:
             payment_method=payment_method,
             description=description,
             phone=phone,
-            job_date=job_date
+            job_date=job_date,
+            technician_name=technician_name
         )
     
     def parse_multiple_jobs(self, text: str) -> List[ParsedJob]:
@@ -369,6 +374,71 @@ class MessageParser:
                     description_lines.append(line_stripped)
         
         return ' | '.join(description_lines[:3])  # Max 3 lines
+    
+    def _extract_technician_name(self, text: str) -> str:
+        """
+        Extract technician name from the message.
+        The technician name is always the last non-empty line of the message
+        that is not pricing info, 'alpha', or other metadata.
+        """
+        lines = text.strip().split('\n')
+        
+        # Words/patterns to skip (not technician names)
+        skip_patterns = [
+            self.TOTAL_CASH_PATTERN,
+            self.TOTAL_CHECK_PATTERN,
+            self.TOTAL_CC_PATTERN,
+            self.TOTAL_ZELLE_PATTERN,
+            self.PRICE_IN_CASH_PATTERN,
+            self.PRICE_IN_CHECK_PATTERN,
+            self.PRICE_IN_CC_PATTERN,
+            self.PRICE_IN_ZELLE_PATTERN,
+            self.STANDALONE_PRICE_PATTERN,
+            self.PARTS_PATTERN,
+            self.PHONE_PATTERN,
+        ]
+        
+        skip_words = ['alpha', 'job', 'alpha job', 'parts', 'total', '$']
+        
+        # Go through lines from the end
+        for line in reversed(lines):
+            line_stripped = line.strip().lower()
+            
+            # Skip empty lines
+            if not line_stripped:
+                continue
+            
+            # Skip if matches any pricing pattern
+            skip = False
+            for pattern in skip_patterns:
+                if pattern.search(line):
+                    skip = True
+                    break
+            
+            if skip:
+                continue
+            
+            # Skip common words that aren't names
+            if line_stripped in skip_words:
+                continue
+            
+            # Skip if line contains only numbers or special characters
+            if re.match(r'^[\d\$\.\,\s\+\-\(\)]+$', line_stripped):
+                continue
+            
+            # Skip if it's an address (contains street suffixes and numbers)
+            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_stripped, re.IGNORECASE):
+                continue
+            
+            # Skip if it looks like "Total XXX" pattern
+            if line_stripped.startswith('total'):
+                continue
+            
+            # This should be the technician name
+            # Return with original capitalization
+            return line.strip().title()  # Title case the name
+        
+        return ""
 
 
 def parse_messages(text: str) -> List[ParsedJob]:
