@@ -161,6 +161,11 @@ class MessageParser:
                         if (self.TOTAL_CASH_PATTERN.search(line) or
                             self.TOTAL_CHECK_PATTERN.search(line) or
                             self.TOTAL_CC_PATTERN.search(line) or
+                            self.TOTAL_ZELLE_PATTERN.search(line) or
+                            self.PRICE_IN_CASH_PATTERN.search(line) or
+                            self.PRICE_IN_CHECK_PATTERN.search(line) or
+                            self.PRICE_IN_CC_PATTERN.search(line) or
+                            self.PRICE_IN_ZELLE_PATTERN.search(line) or
                             self.STANDALONE_PRICE_PATTERN.search(line) or
                             self.PARTS_PATTERN.search(line) or
                             line_stripped == ''):
