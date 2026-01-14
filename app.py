@@ -137,6 +137,8 @@ Parts 30"""
             for i, pj in enumerate(st.session_state.parsed_jobs):
                 with st.expander(f"Job {i+1}: {pj.address[:50]}..." if len(pj.address) > 50 else f"Job {i+1}: {pj.address}"):
                     st.write(f"**Address:** {pj.address}")
+                    if pj.job_date:
+                        st.write(f"**Date:** {pj.job_date.strftime('%m/%d/%Y')}")
                     st.write(f"**Total:** ${pj.total:,.2f}")
                     st.write(f"**Parts:** ${pj.parts:,.2f}")
                     st.write(f"**Payment:** {pj.payment_method.upper()}")
@@ -147,7 +149,7 @@ Parts 30"""
             if st.button("✅ Add All Jobs to Report", type="primary"):
                 for pj in st.session_state.parsed_jobs:
                     new_job = Job(
-                        job_date=date.today(),
+                        job_date=pj.job_date if pj.job_date else date.today(),
                         address=pj.address,
                         total=pj.total,
                         parts=pj.parts,

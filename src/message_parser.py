@@ -14,6 +14,7 @@ class ParsedJob:
     payment_method: str  # 'cash', 'cc', 'check'
     description: str = ""
     phone: str = ""
+    job_date: Optional[date] = None
     
 
 class MessageParser:
@@ -105,6 +106,9 @@ class MessageParser:
         # Find phone
         phone = self._extract_phone(text)
         
+        # Find job date
+        job_date = self._extract_date(text)
+        
         # Find description (lines between address and phone/alpha job)
         description = self._extract_description(text, address, phone)
         
@@ -114,7 +118,8 @@ class MessageParser:
             parts=parts,
             payment_method=payment_method,
             description=description,
-            phone=phone
+            phone=phone,
+            job_date=job_date
         )
     
     def parse_multiple_jobs(self, text: str) -> List[ParsedJob]:
@@ -285,6 +290,33 @@ class MessageParser:
         if match:
             return match.group(0).strip()
         return ""
+    
+    def _extract_date(self, text: str) -> Optional[date]:
+        """Extract job date from text."""
+        # Check for labeled format (date: or Date:)
+        match = self.DATE_LABEL_PATTERN.search(text)
+        if match:
+            date_str = match.group(1).strip()
+            # Try various date formats
+            # Format: M/D/YY or MM/DD/YY or M/D/YYYY
+            date_patterns = [
+                (r'^(\d{1,2})/(\d{1,2})/(\d{2})$', '%m/%d/%y'),      # 1/5/26 -> Jan 5, 2026
+                (r'^(\d{1,2})/(\d{1,2})/(\d{4})$', '%m/%d/%Y'),      # 1/5/2026
+                (r'^(\d{1,2})-(\d{1,2})-(\d{2})$', '%m-%d-%y'),      # 1-5-26
+                (r'^(\d{1,2})-(\d{1,2})-(\d{4})$', '%m-%d-%Y'),      # 1-5-2026
+                (r'^(\d{1,2})\.(\d{1,2})\.(\d{2})$', '%m.%d.%y'),    # 1.5.26
+                (r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$', '%m.%d.%Y'),    # 1.5.2026
+            ]
+            
+            from datetime import datetime
+            for pattern, fmt in date_patterns:
+                if re.match(pattern, date_str):
+                    try:
+                        return datetime.strptime(date_str, fmt).date()
+                    except ValueError:
+                        continue
+        
+        return None
     
     def _extract_description(self, text: str, address: str, phone: str) -> str:
         """Extract job description (text between address and phone/alpha job)."""
