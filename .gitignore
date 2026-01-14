@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Output files
+output/reports/*.xlsx
+output/reports/*.pdf
+!output/reports/.gitkeep
+
+# Data files (except examples)
+data/jobs/*.xlsx
+data/jobs/*.csv
+!data/jobs/.gitkeep
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/
+
+# Temp
+*.tmp
+*.temp

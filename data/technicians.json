@@ -1,0 +1,12 @@
+[
+    {
+        "id": "tech1",
+        "name": "Technician 1",
+        "commission_rate": 0.50
+    },
+    {
+        "id": "tech2",
+        "name": "Technician 2",
+        "commission_rate": 0.40
+    }
+]
