@@ -8,6 +8,7 @@ from pathlib import Path
 
 from src.models import Job, Technician
 from src.report_generator import ReportGenerator
+from src.html_exporter import HTMLReportExporter
 from src.data_loader import DataLoader
 from config import COMPANY_NAME, DEFAULT_COMMISSION_RATE
 
@@ -163,23 +164,48 @@ def main():
         
         # Download button
         st.markdown("---")
+        st.markdown("### 📥 Download Report")
         
-        # Generate Excel file in memory
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            generator.export_excel(tmp.name)
-            with open(tmp.name, 'rb') as f:
-                excel_data = f.read()
-            Path(tmp.name).unlink()
+        # Generate HTML report
+        html_exporter = HTMLReportExporter(technician)
+        html_exporter.add_jobs(jobs)
+        html_content = html_exporter.generate_html()
         
         timestamp = datetime.now().strftime('%Y%m%d')
-        filename = f"{technician_name.replace(' ', '_')}_{timestamp}.xlsx"
+        html_filename = f"{technician_name.replace(' ', '_')}_{timestamp}.html"
         
-        st.download_button(
-            label="📥 Download Excel Report",
-            data=excel_data,
-            file_name=filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.download_button(
+                label="📄 Download HTML Report",
+                data=html_content,
+                file_name=html_filename,
+                mime="text/html"
+            )
+        
+        with col2:
+            # Generate Excel file in memory
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                tmp_path = tmp.name
+            
+            generator.export_excel(tmp_path)
+            with open(tmp_path, 'rb') as f:
+                excel_data = f.read()
+            
+            try:
+                Path(tmp_path).unlink()
+            except:
+                pass  # Ignore if file is locked
+            
+            excel_filename = f"{technician_name.replace(' ', '_')}_{timestamp}.xlsx"
+            
+            st.download_button(
+                label="📊 Download Excel Report",
+                data=excel_data,
+                file_name=excel_filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
     
     elif not technician_name:
         st.info("👈 Please enter the technician name in the sidebar")

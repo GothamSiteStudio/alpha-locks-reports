@@ -41,14 +41,14 @@ class ReportGenerator:
                 'Date': r.job.job_date.strftime('%Y%m%d') if r.job.job_date else '',
                 'Address': r.job.address,
                 '%': f"{int(r.job.commission_rate * 100)}%",
-                'Total': r.job.total,
-                'Parts': r.job.parts if r.job.parts > 0 else '',
-                'Cash': r.job.cash_amount if r.job.cash_amount > 0 else '',
-                'CC': r.job.cc_amount if r.job.cc_amount > 0 else '',
-                'Check': r.job.check_amount if r.job.check_amount > 0 else '',
-                'FEE': r.job.fee if r.job.fee > 0 else '',
-                'Tech Profit': r.tech_profit,
-                'Balance': r.balance
+                'Total': f"${r.job.total:,.2f}",
+                'Parts': f"${r.job.parts:,.2f}" if r.job.parts > 0 else '',
+                'Cash': f"${r.job.cash_amount:,.2f}" if r.job.cash_amount > 0 else '',
+                'CC': f"${r.job.cc_amount:,.2f}" if r.job.cc_amount > 0 else '',
+                'Check': f"${r.job.check_amount:,.2f}" if r.job.check_amount > 0 else '',
+                'FEE': f"${r.job.fee:,.2f}" if r.job.fee > 0 else '',
+                'Tech Profit': f"${r.tech_profit:,.2f}",
+                'Balance': f"${r.balance:,.2f}"
             })
         
         return pd.DataFrame(data)

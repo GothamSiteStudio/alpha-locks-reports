@@ -1,156 +1,170 @@
-# Alpha Locks and Safe - Technician Reports System
+# 🔐 Alpha Locks and Safe - Technician Reports
 
-## 📋 תיאור הפרויקט
+A commission calculation and report generation system for locksmith technicians.
 
-מערכת ליצירת דוחות עמלות לטכנאים של Alpha Locks and Safe.
+## 📋 Overview
 
-המערכת מחשבת אוטומטית את החלוקה בין החברה לטכנאי לפי:
-- אחוז העמלה של הטכנאי
-- עלות החלקים
-- אמצעי התשלום (מזומן/אשראי/צ'ק/העברה בנקאית)
+This system automatically calculates technician commissions based on:
+- Commission rate (percentage)
+- Parts cost
+- Payment method (Cash, Credit Card, Check, Bank Transfer)
+
+## 💰 Commission Logic
+
+### When customer pays CASH to technician:
+```
+Tech Profit = (Total - Parts) × Commission Rate
+Balance = Total - Parts - Tech Profit  (Tech brings this to company)
+```
+
+**Example:** $1000 job, $50 parts, 50% commission
+- Tech Profit: (1000 - 50) × 50% = **$475**
+- Balance to bring: $1000 - $50 - $475 = **$475**
+
+### When customer pays COMPANY (CC/Check/Transfer):
+```
+Tech Payment = (Total - Parts) × Commission Rate + Parts
+Balance = negative (Company owes tech)
+```
+
+**Example:** $1000 CC payment, $50 parts, 50% commission
+- Tech receives: (1000 - 50) × 50% + 50 = $475 + $50 = **$525**
 
 ---
 
-## 💰 לוגיקת החישוב
+## 🚀 Quick Start
 
-### כאשר הלקוח משלם במזומן לטכנאי:
-```
-רווח_טכנאי = (סכום_עבודה - חלקים) × אחוז_עמלה
-באלנס_להבאה = סכום_עבודה - חלקים - רווח_טכנאי
-```
-
-**דוגמה:** עבודה ב-$1000, חלקים $50, עמלה 50%
-- רווח טכנאי: (1000 - 50) × 50% = $475
-- באלנס להבאה לחברה: $1000 - $50 - $475 = **$475**
-
-### כאשר הלקוח משלם לחברה (אשראי/צ'ק/העברה):
-```
-תשלום_לטכנאי = (סכום_עבודה - חלקים) × אחוז_עמלה + חלקים
-באלנס = -תשלום_לטכנאי (החברה חייבת לטכנאי)
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
 ```
 
-**דוגמה:** עבודה ב-$1000, חלקים $50, עמלה 50%
-- תשלום לטכנאי: (1000 - 50) × 50% + 50 = $475 + $50 = **$525**
+### 2. Run Web Interface
+```bash
+streamlit run app.py
+```
+
+### 3. Open in Browser
+Navigate to `http://localhost:8501`
 
 ---
 
-## 🏗️ מבנה הפרויקט
+## 📊 Features
+
+- ✅ **Web Interface** - Easy-to-use Streamlit app
+- ✅ **Excel Import** - Upload job data from Excel/CSV files
+- ✅ **Manual Entry** - Add jobs one by one
+- ✅ **HTML Reports** - Beautiful reports styled like professional invoices
+- ✅ **Excel Export** - Download data as Excel spreadsheet
+- ✅ **Auto Calculation** - Instant commission and balance calculations
+- ✅ **Summary View** - Total jobs, sales, profit, and balance at a glance
+
+---
+
+## 📁 Project Structure
 
 ```
 alpha-locks-reports/
-├── README.md
-├── requirements.txt
-├── config.py              # הגדרות (אחוזי עמלה, שמות טכנאים)
+├── app.py                 # Streamlit web interface
+├── main.py                # CLI interface
+├── config.py              # Configuration settings
+├── requirements.txt       # Python dependencies
 ├── src/
-│   ├── __init__.py
-│   ├── models.py          # מודלים: Job, Technician, Report
-│   ├── calculator.py      # לוגיקת חישוב העמלות
-│   ├── report_generator.py # יצירת הדוחות
-│   └── excel_exporter.py  # ייצוא ל-Excel
-├── templates/
-│   └── report_template.xlsx
+│   ├── models.py          # Data models (Job, Technician, JobResult)
+│   ├── calculator.py      # Commission calculation logic
+│   ├── report_generator.py # Excel report generation
+│   ├── html_exporter.py   # HTML report generation
+│   └── data_loader.py     # Excel/CSV data loading
 ├── data/
-│   ├── jobs/              # קבצי עבודות (CSV/Excel)
-│   └── technicians.json   # רשימת טכנאים
+│   ├── technicians.json   # Technician list
+│   └── jobs/              # Job data files
 ├── output/
-│   └── reports/           # דוחות שנוצרו
+│   └── reports/           # Generated reports
 └── tests/
-    └── test_calculator.py
+    └── test_calculator.py # Unit tests
 ```
 
 ---
 
-## 📊 מבנה הדוח
+## 📥 Input File Format
 
-| עמודה | תיאור |
-|-------|-------|
-| Date | תאריך העבודה |
-| Address | כתובת העבודה |
-| % | אחוז העמלה של הטכנאי |
-| Total | סכום העבודה הכולל |
-| Parts | עלות חלקים |
-| Cash | תשלום במזומן |
-| CC | תשלום באשראי |
-| Check | תשלום בצ'ק |
-| FEE | עמלת סליקה |
-| Tech Profit | רווח הטכנאי |
-| Balance | באלנס (+ טכנאי חייב / - חברה חייבת) |
+Excel or CSV with these columns:
 
----
+| Column | Description | Required |
+|--------|-------------|----------|
+| Date | Job date (YYYYMMDD) | Optional |
+| Address | Job location | Yes |
+| Total | Total job amount | Yes |
+| Parts | Parts cost | Optional |
+| Cash | Cash payment amount | * |
+| CC | Credit card amount | * |
+| Check | Check amount | * |
+| % | Commission rate | Optional |
+| FEE | Processing fee | Optional |
 
-## 🚀 תוכנית עבודה
-
-### שלב 1: תשתית בסיסית ✅
-- [x] יצירת Repository
-- [ ] הקמת מבנה תיקיות
-- [ ] הגדרת dependencies (pandas, openpyxl)
-
-### שלב 2: לוגיקה עסקית
-- [ ] מודל Job - ייצוג עבודה בודדת
-- [ ] מודל Technician - פרטי טכנאי ואחוז עמלה
-- [ ] Calculator - חישוב עמלות ובאלנס
-
-### שלב 3: קלט נתונים
-- [ ] קריאת נתונים מ-Excel/CSV
-- [ ] ממשק פשוט להזנת עבודות
-- [ ] שמירת נתוני טכנאים
-
-### שלב 4: יצירת דוחות
-- [ ] עיצוב תבנית Excel
-- [ ] כותרת עם שם חברה, טכנאי ותאריכים
-- [ ] טבלת עבודות מפורטת
-- [ ] שורת סיכום
-
-### שלב 5: ממשק משתמש (אופציונלי)
-- [ ] ממשק ווב פשוט (Streamlit)
-- [ ] העלאת קובץ Excel
-- [ ] הורדת דוח מוכן
+*At least one payment method required
 
 ---
 
-## 🛠️ טכנולוגיות
+## 📄 Report Output
 
-- **Python 3.10+**
-- **Pandas** - עיבוד נתונים
-- **OpenPyXL** - עבודה עם Excel
-- **Streamlit** (אופציונלי) - ממשק משתמש
+### HTML Report
+Beautiful, print-ready report with:
+- Company name and technician name header
+- Date range
+- Detailed job table
+- Color-coded summary row (cyan)
+- Formatted currency values
+
+### Excel Report
+Spreadsheet with:
+- Same data as HTML
+- Proper column formatting
+- Summary row with totals
 
 ---
 
-## 📝 שימוש בסיסי
+## 🖥️ CLI Usage
+
+```bash
+python main.py jobs.xlsx --technician "John Doe" --commission 0.5
+```
+
+Options:
+- `-t, --technician` - Technician name (required)
+- `-c, --commission` - Commission rate (default: 0.5)
+- `-o, --output` - Output file path
+
+---
+
+## ⚙️ Configuration
+
+Edit `config.py` to customize:
 
 ```python
-from src.calculator import CommissionCalculator
-from src.report_generator import ReportGenerator
+COMPANY_NAME = "Alpha Locks and Safe"
+DEFAULT_COMMISSION_RATE = 0.50  # 50%
 
-# הגדרת עבודה
-job = {
-    'date': '2024-01-15',
-    'address': '101 Needham Avenue, Bronx, NY 10466',
-    'total': 1000,
-    'parts': 50,
-    'payment_method': 'cash',  # cash / cc / check / transfer
-    'commission_rate': 0.50
-}
-
-# חישוב
-calc = CommissionCalculator()
-result = calc.calculate(job)
-print(f"Tech Profit: ${result['tech_profit']}")
-print(f"Balance: ${result['balance']}")
-
-# יצירת דוח
-generator = ReportGenerator(technician_name="John Doe")
-generator.add_jobs([job])
-generator.export("output/report_january.xlsx")
+# Payment methods that go to company
+COMPANY_PAYMENT_METHODS = ['cc', 'check', 'transfer']
 ```
 
 ---
 
-## 📞 יצירת קשר
+## 🧪 Running Tests
 
-**Alpha Locks and Safe**
+```bash
+pytest tests/ -v
+```
+
+All 8 tests should pass ✅
 
 ---
 
-*נוצר עם ❤️ למנעולנים בניו יורק*
+## 📝 License
+
+Private - Alpha Locks and Safe
+
+---
+
+Made with ❤️ for NYC locksmiths
