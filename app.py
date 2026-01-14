@@ -10,6 +10,7 @@ from src.models import Job, Technician
 from src.report_generator import ReportGenerator
 from src.html_exporter import HTMLReportExporter
 from src.data_loader import DataLoader
+from src.message_parser import MessageParser
 from config import COMPANY_NAME, DEFAULT_COMMISSION_RATE
 
 
@@ -38,46 +39,92 @@ def main():
     
     st.sidebar.markdown("---")
     
-    # Data input method
-    input_method = st.radio(
-        "How would you like to input job data?",
-        ["📁 Upload Excel/CSV file", "✏️ Manual entry"],
-        horizontal=True
-    )
+    # Session state for jobs
+    if 'manual_jobs' not in st.session_state:
+        st.session_state.manual_jobs = []
     
-    jobs = []
+    # Input method tabs
+    tab1, tab2 = st.tabs(["📋 Paste Messages", "✏️ Manual Entry"])
     
-    if input_method == "📁 Upload Excel/CSV file":
-        uploaded_file = st.file_uploader(
-            "Upload job data file",
-            type=['xlsx', 'xls', 'csv']
+    # Tab 1: Paste Messages
+    with tab1:
+        st.markdown("### 📋 Paste Job Closure Messages")
+        st.markdown("Paste your job closure messages below. The app will automatically extract the data.")
+        
+        messages_text = st.text_area(
+            "Paste messages here:",
+            height=300,
+            placeholder="""Example:
+27 Deepwood Hill St, Chappaqua, NY 10514
+locks change 
+(847) 444-9779
+alpha job
+$446
+Parts $15
+
+15 E Franklin St, Tarrytown, NY 10591 
+Hlo
++1 (917) 584-6993
+Alpha Job
+Total cash 1231 
+Parts 30"""
         )
         
-        if uploaded_file:
-            # Save to temp file and load
-            with tempfile.NamedTemporaryFile(delete=False, suffix=Path(uploaded_file.name).suffix) as tmp:
-                tmp.write(uploaded_file.getvalue())
-                tmp_path = tmp.name
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            parse_button = st.button("🔍 Parse Messages", type="primary")
+        
+        # Initialize parsed jobs in session state
+        if 'parsed_jobs' not in st.session_state:
+            st.session_state.parsed_jobs = []
+        
+        if parse_button and messages_text.strip():
+            parser = MessageParser()
+            st.session_state.parsed_jobs = parser.parse_multiple_jobs(messages_text)
+        
+        # Show parsed jobs if available
+        if st.session_state.parsed_jobs:
+            st.success(f"✅ Found {len(st.session_state.parsed_jobs)} jobs!")
             
-            try:
-                if uploaded_file.name.endswith('.csv'):
-                    jobs = DataLoader.load_from_csv(tmp_path, commission_rate)
-                else:
-                    jobs = DataLoader.load_from_excel(tmp_path, commission_rate)
-                
-                st.success(f"✅ Loaded {len(jobs)} jobs from file")
-            except Exception as e:
-                st.error(f"❌ Error loading file: {str(e)}")
-            finally:
-                Path(tmp_path).unlink()
+            # Show parsed jobs for confirmation
+            st.markdown("#### Parsed Jobs:")
+            for i, pj in enumerate(st.session_state.parsed_jobs):
+                with st.expander(f"Job {i+1}: {pj.address[:50]}..." if len(pj.address) > 50 else f"Job {i+1}: {pj.address}"):
+                    st.write(f"**Address:** {pj.address}")
+                    st.write(f"**Total:** ${pj.total:,.2f}")
+                    st.write(f"**Parts:** ${pj.parts:,.2f}")
+                    st.write(f"**Payment:** {pj.payment_method.upper()}")
+                    if pj.description:
+                        st.write(f"**Description:** {pj.description}")
+            
+            # Add all parsed jobs button
+            if st.button("✅ Add All Jobs to Report", type="primary"):
+                for pj in st.session_state.parsed_jobs:
+                    new_job = Job(
+                        job_date=date.today(),
+                        address=pj.address,
+                        total=pj.total,
+                        parts=pj.parts,
+                        payment_method=pj.payment_method,
+                        commission_rate=commission_rate,
+                        fee=0,
+                        cash_amount=pj.total if pj.payment_method == 'cash' else 0,
+                        cc_amount=pj.total if pj.payment_method == 'cc' else 0,
+                        check_amount=pj.total if pj.payment_method == 'check' else 0
+                    )
+                    st.session_state.manual_jobs.append(new_job)
+                added_count = len(st.session_state.parsed_jobs)
+                st.session_state.parsed_jobs = []  # Clear parsed jobs
+                st.success(f"✅ Added {added_count} jobs!")
+                st.rerun()
+        
+        elif parse_button and messages_text.strip():
+            st.warning("⚠️ Could not parse any jobs. Make sure messages contain address, 'alpha job', and price.")
     
-    else:  # Manual entry
-        st.markdown("### ➕ Add Jobs")
-        
-        # Session state for jobs
-        if 'manual_jobs' not in st.session_state:
-            st.session_state.manual_jobs = []
-        
+    # Tab 2: Manual Entry
+    with tab2:
+        st.markdown("### ✏️ Add Job Manually")
+    
         with st.form("add_job_form"):
             col1, col2 = st.columns(2)
             
@@ -116,17 +163,35 @@ def main():
                 st.session_state.manual_jobs.append(new_job)
                 st.success("✅ Job added!")
                 st.rerun()
+    
+    # Show current jobs
+    jobs = st.session_state.manual_jobs
+    
+    st.markdown("---")
+    if jobs:
+        st.markdown(f"### 📝 Current Jobs ({len(jobs)})")
         
-        jobs = st.session_state.manual_jobs
+        # Show jobs table preview
+        jobs_preview = []
+        for j in jobs:
+            jobs_preview.append({
+                'Address': j.address[:40] + '...' if len(j.address) > 40 else j.address,
+                'Total': f"${j.total:,.0f}",
+                'Parts': f"${j.parts:,.0f}" if j.parts > 0 else '-',
+                'Payment': j.payment_method.upper()
+            })
+        st.dataframe(jobs_preview, use_container_width=True, hide_index=True)
         
-        if jobs:
-            st.markdown(f"**{len(jobs)} jobs added**")
-            if st.button("🗑️ Clear all jobs"):
-                st.session_state.manual_jobs = []
-                st.rerun()
+        if st.button("🗑️ Clear all jobs"):
+            st.session_state.manual_jobs = []
+            st.session_state.parsed_jobs = []
+            st.rerun()
     
     # Generate report
     st.markdown("---")
+    
+    if jobs and not technician_name:
+        st.warning("⚠️ Please enter the **Technician Name** in the sidebar to generate the report")
     
     if jobs and technician_name:
         st.markdown("### 📊 Report Preview")

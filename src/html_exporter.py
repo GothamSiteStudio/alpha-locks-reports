@@ -217,7 +217,7 @@ class HTMLReportExporter:
         """Format date as YYYYMMDD."""
         if d is None:
             return ""
-        return d.strftime("%Y%m%d")
+        return d.strftime("%d/%m/%Y")
     
     def generate_html(self) -> str:
         """Generate HTML report."""
