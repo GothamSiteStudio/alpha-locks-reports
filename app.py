@@ -12,9 +12,48 @@ from src.html_exporter import HTMLReportExporter
 from src.data_loader import DataLoader
 from src.message_parser import MessageParser
 from config import COMPANY_NAME, DEFAULT_COMMISSION_RATE
+from auth_config import verify_password
+
+
+def login_page():
+    """Display login page."""
+    st.set_page_config(
+        page_title=f"{COMPANY_NAME} - Login",
+        page_icon="🔐",
+        layout="centered"
+    )
+    
+    st.title("🔐 Alpha Locks and Safe")
+    st.subheader("Login to Reports System")
+    
+    st.markdown("---")
+    
+    with st.form("login_form"):
+        username = st.text_input("👤 Username")
+        password = st.text_input("🔑 Password", type="password")
+        submit = st.form_submit_button("🚀 Login", type="primary")
+        
+        if submit:
+            if verify_password(username, password):
+                st.session_state.authenticated = True
+                st.session_state.username = username
+                st.rerun()
+            else:
+                st.error("❌ Invalid username or password")
+    
+    st.markdown("---")
+    st.caption("© Alpha Locks and Safe - Reports System")
 
 
 def main():
+    # Check authentication
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if not st.session_state.authenticated:
+        login_page()
+        return
+    
     st.set_page_config(
         page_title=f"{COMPANY_NAME} - Reports",
         page_icon="🔐",
@@ -27,6 +66,15 @@ def main():
     # Sidebar configuration
     st.sidebar.header("⚙️ Settings")
     
+    # Show logged in user and logout button
+    st.sidebar.markdown(f"👤 Logged in as: **{st.session_state.username}**")
+    if st.sidebar.button("🚪 Logout"):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.rerun()
+    
+    st.sidebar.markdown("---")
+    
     technician_name = st.sidebar.text_input("Technician Name", value="")
     
     commission_rate = st.sidebar.slider(
@@ -36,8 +84,6 @@ def main():
         value=50,
         step=5
     ) / 100
-    
-    st.sidebar.markdown("---")
     
     # Session state for jobs
     if 'manual_jobs' not in st.session_state:
