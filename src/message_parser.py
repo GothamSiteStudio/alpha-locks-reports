@@ -137,7 +137,12 @@ class MessageParser:
     def parse_multiple_jobs(self, text: str) -> List[ParsedJob]:
         """
         Parse multiple job messages from a single text block.
-        Jobs are separated by "alpha job" markers.
+        Jobs are separated by identifying technician names at the end of each job.
+        
+        Logic:
+        - Each job ends with a technician name (1-2 words, letters only)
+        - After the technician name, a new job starts
+        - New job starts with: address, phone, timestamp, description, etc.
         
         Args:
             text: Text containing multiple job messages
@@ -146,103 +151,115 @@ class MessageParser:
             List of ParsedJob objects
         """
         jobs = []
+        lines = text.strip().split('\n')
         
-        # Split by "alpha job" marker
-        parts = re.split(r'(alpha\s*job)', text, flags=re.IGNORECASE)
+        # Words to ignore (not technician names)
+        ignore_words = {'alpha', 'job', 'parts', 'part', 'total', 'cash', 'check', 
+                        'cc', 'zelle', 'credit', 'card', 'hlo', 'hello', 'hi'}
         
-        # Reconstruct job blocks (each job ends with "alpha job")
+        def is_technician_name(line: str) -> bool:
+            """Check if a line is a technician name (1-2 words, only letters)"""
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+            
+            if not line_stripped:
+                return False
+            
+            # Must not contain numbers
+            if re.search(r'\d', line_stripped):
+                return False
+            
+            # Must not contain special characters
+            if re.search(r'[\$\+\(\)\[\]\@\#\%\&\*]', line_stripped):
+                return False
+            
+            # Skip Hebrew
+            if re.search(r'[\u0590-\u05FF]', line_stripped):
+                return False
+            
+            # Skip "alpha job" pattern
+            if re.match(r'^alpha\s*job$', line_lower):
+                return False
+            
+            # Check for 1-2 words, only letters
+            words = line_stripped.split()
+            if len(words) > 2:
+                return False
+            
+            # All words must be only letters
+            if not all(re.match(r'^[a-zA-Z]+$', w) for w in words):
+                return False
+            
+            # Filter out ignored words
+            name_words = [w for w in words if w.lower() not in ignore_words]
+            return len(name_words) > 0
+        
+        def is_new_job_start(line: str) -> bool:
+            """Check if a line looks like the start of a new job"""
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+            
+            if not line_stripped:
+                return False
+            
+            # Timestamp pattern [9:38 PM, 1/7/2026] or similar
+            if re.match(r'^\[?\d{1,2}:\d{2}', line_stripped):
+                return True
+            
+            # Address pattern (number + street)
+            if re.search(r'^\d+[A-Za-z]?\s+[\w\s]+(?:st|street|ave|avenue|rd|road|blvd|dr|drive|ln|lane|way|pl|place|ct|court)', line_lower, re.IGNORECASE):
+                return True
+            
+            # Phone number
+            if self.PHONE_PATTERN.match(line_stripped):
+                return True
+            
+            return False
+        
+        # Split into job blocks
         job_blocks = []
-        current_block = ""
+        current_block = []
+        found_pricing_in_block = False
         
-        for i, part in enumerate(parts):
-            if re.match(r'alpha\s*job', part, re.IGNORECASE):
-                # This is the marker, add it to current block and save
-                current_block += part
-                # Look for pricing info AND technician name after the marker
-                if i + 1 < len(parts):
-                    # Get the next part and extract pricing info + technician name
-                    next_part = parts[i + 1]
-                    job_ending_lines = []
-                    found_pricing = False
-                    found_tech_section = False
-                    
-                    lines = next_part.split('\n')
-                    stop_index = len(lines)
-                    
-                    for idx, line in enumerate(lines):
-                        line_stripped = line.strip().lower()
-                        
-                        # Check if this line contains pricing info
-                        is_pricing = (self.TOTAL_CASH_PATTERN.search(line) or
-                            self.TOTAL_CHECK_PATTERN.search(line) or
-                            self.TOTAL_CC_PATTERN.search(line) or
-                            self.RUN_CC_PATTERN.search(line) or
-                            self.TOTAL_ZELLE_PATTERN.search(line) or
-                            self.PRICE_IN_CASH_PATTERN.search(line) or
-                            self.PRICE_IN_CHECK_PATTERN.search(line) or
-                            self.PRICE_IN_CC_PATTERN.search(line) or
-                            self.PRICE_IN_ZELLE_PATTERN.search(line) or
-                            self.STANDALONE_PRICE_PATTERN.search(line) or
-                            self.PARTS_PATTERN.search(line))
-                        
-                        if is_pricing:
-                            found_pricing = True
-                            job_ending_lines.append(line)
-                            continue
-                        
-                        # Empty line - continue
-                        if line_stripped == '':
-                            job_ending_lines.append(line)
-                            continue
-                        
-                        # "Alpha" alone (company name before technician)
-                        if line_stripped == 'alpha':
-                            found_tech_section = True
-                            job_ending_lines.append(line)
-                            continue
-                        
-                        # If we found "Alpha", the next non-empty line is the technician name
-                        if found_tech_section and line_stripped:
-                            # Check if this looks like a new job (timestamp, address)
-                            if re.match(r'^\[?\d{1,2}:\d{2}', line.strip()):
-                                # This is a timestamp - new job starts
-                                stop_index = idx
-                                break
-                            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_stripped, re.IGNORECASE):
-                                # This is an address - new job starts
-                                stop_index = idx
-                                break
-                            # This is the technician name
-                            job_ending_lines.append(line)
-                            # After technician name, we're done with this job
-                            stop_index = idx + 1
-                            break
-                        
-                        # If we found pricing but not "Alpha" section, check if this could be tech name
-                        if found_pricing and not found_tech_section:
-                            # If it's a simple word (potential name), include it
-                            if re.match(r'^[a-zA-Z\s]+$', line.strip()) and len(line.strip()) < 30:
-                                job_ending_lines.append(line)
-                                stop_index = idx + 1
-                                break
-                            else:
-                                # This is the start of a new job
-                                stop_index = idx
-                                break
-                    
-                    current_block += '\n'.join(job_ending_lines)
-                    # Update the next part to remove what we used
-                    remaining_lines = lines[stop_index:]
-                    parts[i + 1] = '\n'.join(remaining_lines)
+        for i, line in enumerate(lines):
+            line_stripped = line.strip()
+            line_lower = line_stripped.lower()
+            
+            # Check if this line has pricing info
+            has_pricing = (self.TOTAL_CASH_PATTERN.search(line) or
+                          self.TOTAL_CHECK_PATTERN.search(line) or
+                          self.TOTAL_CC_PATTERN.search(line) or
+                          self.RUN_CC_PATTERN.search(line) or
+                          self.TOTAL_ZELLE_PATTERN.search(line) or
+                          self.PRICE_IN_CASH_PATTERN.search(line) or
+                          self.PRICE_IN_CHECK_PATTERN.search(line) or
+                          self.PRICE_IN_CC_PATTERN.search(line) or
+                          self.PRICE_IN_ZELLE_PATTERN.search(line) or
+                          self.STANDALONE_PRICE_PATTERN.search(line) or
+                          self.PARTS_PATTERN.search(line))
+            
+            if has_pricing:
+                found_pricing_in_block = True
+            
+            current_block.append(line)
+            
+            # Check if this line is a technician name (potential end of job)
+            # Only consider it as end if we found pricing info in this block
+            if found_pricing_in_block and is_technician_name(line):
+                # Look ahead to see if next non-empty line is a new job start
+                next_line_idx = i + 1
+                while next_line_idx < len(lines) and not lines[next_line_idx].strip():
+                    next_line_idx += 1
                 
-                job_blocks.append(current_block)
-                current_block = ""
-            else:
-                current_block += part
+                if next_line_idx >= len(lines) or is_new_job_start(lines[next_line_idx]):
+                    # This is the end of a job
+                    job_blocks.append('\n'.join(current_block))
+                    current_block = []
+                    found_pricing_in_block = False
         
-        # Don't forget the last block if it doesn't end with alpha job
-        if current_block.strip():
-            job_blocks.append(current_block)
+        # Don't forget the last block
+        if current_block:
+            job_blocks.append('\n'.join(current_block))
         
         # Parse each job block
         for block in job_blocks:
@@ -254,9 +271,18 @@ class MessageParser:
         return jobs
     
     def _clean_address(self, address: str) -> str:
-        """Clean address string by removing description parts."""
+        """Clean address string by removing description parts and timestamp prefixes."""
         if not address:
             return address
+        
+        # Remove WhatsApp-style timestamp prefixes like "[4:28 PM, 12/30/2025] Oren:"
+        timestamp_patterns = [
+            r'^\[?\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?,?\s*\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4}\]\s*[^:]*:\s*',  # Time first
+            r'^\[?\d{1,2}[/\-\.]\d{1,2}[/\-\.]\d{2,4},?\s*\d{1,2}:\d{2}(?::\d{2})?\s*(?:AM|PM)?\]\s*[^:]*:\s*',  # Date first
+        ]
+        for pattern in timestamp_patterns:
+            address = re.sub(pattern, '', address, flags=re.IGNORECASE)
+        address = address.strip()
         
         # Stop at phone number
         phone_match = self.PHONE_PATTERN.search(address)
@@ -526,157 +552,61 @@ class MessageParser:
     def _extract_technician_name(self, text: str) -> str:
         """
         Extract technician name from the message.
-        The technician name appears at the very end of the message, after:
-        - Alpha job marker
-        - Pricing info (Total, Parts)
-        - "Alpha" company name
+        The technician name is always the last word(s) in the message.
+        Can be 1 or 2 words (first name or first + last name).
         
-        Format example:
-        ...
-        Alpha job
-        Total cash 500
-        Parts 75$
-        
-        Alpha
-        Omri  <-- This is the technician name
+        We ignore irrelevant words like "Alpha", "job", etc.
         """
         lines = text.strip().split('\n')
         
-        # Find where pricing info ends - look for the last pricing line
-        last_pricing_index = -1
+        # Words to ignore (not technician names)
+        ignore_words = {'alpha', 'job', 'parts', 'part', 'total', 'cash', 'check', 
+                        'cc', 'zelle', 'credit', 'card', 'hlo', 'hello', 'hi'}
         
-        pricing_patterns = [
-            self.TOTAL_CASH_PATTERN,
-            self.TOTAL_CHECK_PATTERN,
-            self.TOTAL_CC_PATTERN,
-            self.TOTAL_ZELLE_PATTERN,
-            self.RUN_CC_PATTERN,
-            self.PRICE_IN_CASH_PATTERN,
-            self.PRICE_IN_CHECK_PATTERN,
-            self.PRICE_IN_CC_PATTERN,
-            self.PRICE_IN_ZELLE_PATTERN,
-            self.STANDALONE_PRICE_PATTERN,
-            self.PARTS_PATTERN,
-        ]
-        
-        for i, line in enumerate(lines):
-            line_lower = line.strip().lower()
-            
-            # Check for pricing patterns
-            for pattern in pricing_patterns:
-                if pattern.search(line):
-                    last_pricing_index = i
-                    break
-            
-            # Check for "Alpha Omri" or "Alpha <Name>" pattern - extract name directly
-            alpha_name_match = re.match(r'^alpha\s+([a-zA-Z]+)\s*$', line_lower)
-            if alpha_name_match:
-                return alpha_name_match.group(1).title()
-            
-            # Also check for "alpha" alone (company name marker before tech name)
-            if line_lower == 'alpha':
-                last_pricing_index = i
-        
-        # Now look for technician name AFTER the last pricing/alpha line
-        if last_pricing_index >= 0:
-            # Search from after the last pricing line
-            for line in lines[last_pricing_index + 1:]:
-                line_stripped = line.strip()
-                line_lower = line_stripped.lower()
-                
-                # Skip empty lines
-                if not line_stripped:
-                    continue
-                
-                # Skip "alpha" word alone
-                if line_lower == 'alpha':
-                    continue
-                
-                # Check for "Alpha <Name>" pattern
-                alpha_name_match = re.match(r'^alpha\s+([a-zA-Z]+)\s*$', line_lower)
-                if alpha_name_match:
-                    name = alpha_name_match.group(1).title()
-                    if name.lower() != 'job':
-                        return name
-                
-                # Skip if it's an address
-                if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_lower, re.IGNORECASE):
-                    continue
-                
-                # Skip timestamp patterns like [9:38 PM, 1/7/2026]
-                if re.match(r'^\[?\d{1,2}:\d{2}', line_stripped):
-                    continue
-                
-                # Skip lines with Hebrew characters
-                if re.search(r'[\u0590-\u05FF]', line_stripped):
-                    continue
-                
-                # Skip lines that look like message headers (contain dates like 03/12/25)
-                if re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', line_stripped):
-                    continue
-                
-                # Must be a simple name (only letters, reasonable length)
-                if re.match(r'^[a-zA-Z]+$', line_stripped) and 2 <= len(line_stripped) <= 20:
-                    return line_stripped.title()
-        
-        # Fallback: search from the end for any valid name
-        skip_words = ['alpha', 'job', 'alpha job', 'parts', 'total', '$', 'oren']
+        # Search from the end of the message for the technician name
+        potential_name_lines = []
         
         for line in reversed(lines):
             line_stripped = line.strip()
             line_lower = line_stripped.lower()
             
+            # Skip empty lines
             if not line_stripped:
                 continue
             
-            # Check for "Alpha <Name>" pattern
-            # Support both full line match "^Alpha Name$" and end of line match ".... Alpha Name$"
-            alpha_name_match = re.search(r'alpha\s+([a-zA-Z]+)\s*$', line_lower)
-            if alpha_name_match:
-                name = alpha_name_match.group(1).title()
-                if name.lower() != 'job':
-                    return name
-            
-            # Skip pricing patterns
-            skip = False
-            for pattern in pricing_patterns:
-                if pattern.search(line):
-                    skip = True
-                    break
-            if skip:
+            # Skip if it contains numbers (addresses, phones, prices, dates)
+            if re.search(r'\d', line_stripped):
                 continue
             
-            # Skip common words
-            if line_lower in skip_words:
-                continue
-            
-            # Skip numbers and special chars
-            if re.match(r'^[\d\$\.\,\s\+\-\(\)]+$', line_lower):
-                continue
-            
-            # Skip addresses
-            if re.search(r'\d+.*(?:st|ave|rd|blvd|dr|ln|way|pl|ct|broadway)', line_lower, re.IGNORECASE):
-                continue
-            
-            # Skip phone numbers
-            if self.PHONE_PATTERN.search(line):
-                continue
-            
-            # Skip timestamps
-            if re.match(r'^\[?\d{1,2}:\d{2}', line_stripped):
+            # Skip if it contains special characters (prices, etc.)
+            if re.search(r'[\$\+\(\)\[\]]', line_stripped):
                 continue
             
             # Skip lines with Hebrew characters
             if re.search(r'[\u0590-\u05FF]', line_stripped):
                 continue
             
-            # Skip lines that look like message headers (contain dates)
-            if re.search(r'\d{1,2}/\d{1,2}/\d{2,4}', line_stripped):
+            # Skip ignored words
+            if line_lower in ignore_words:
                 continue
             
-            # Must be a simple name (only letters)
-            if re.match(r'^[a-zA-Z]+$', line_stripped) and 2 <= len(line_stripped) <= 20:
-                return line_stripped.title()
+            # Skip "alpha job" pattern
+            if re.match(r'^alpha\s*job$', line_lower):
+                continue
+            
+            # Check if this is a valid name (1-2 words, only letters)
+            words = line_stripped.split()
+            if len(words) <= 2 and all(re.match(r'^[a-zA-Z]+$', w) for w in words):
+                # Filter out ignored words from the name
+                name_words = [w for w in words if w.lower() not in ignore_words]
+                if name_words:
+                    # Found the technician name!
+                    return ' '.join(w.title() for w in name_words)
+            
+            # If we hit a line that's clearly not a name, stop searching
+            # (addresses, descriptions, etc.)
+            if len(words) > 2:
+                break
         
         return ""
 

@@ -35,12 +35,14 @@ Balance = negative (Company owes tech)
 The system includes a sophisticated message parser `src/message_parser.py` that can:
 - Parse single or multiple job messages from WhatsApp/Text
 - Auto-detect:
-  - 📍 Address (extracts clean address, separates description)
+  - 📍 Address (extracts clean address, removes WhatsApp timestamps)
   - 💰 Pricing (Total, Parts, Payment Method)
-  - 👷 Technician Name (even from "Alpha Name" signatures)
+  - 👷 Technician Name (last word(s) in each message - supports first name or full name)
   - 📅 Dates and Timestamps
 - Handle various message formats and messy input
 - Cleanly separate job description from address details
+- Automatically split multiple jobs by detecting technician names at the end of each message
+- Ignore irrelevant text like "Alpha", "Alpha job", etc.
 
 ---
 
