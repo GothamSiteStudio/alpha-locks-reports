@@ -129,19 +129,6 @@ Total cash 450
 Parts 20
 ```
 
-### Format 4: Split Payment (Cash + Credit Card)
-```
-55 Ridgeview Terrace, Elmsford, NY 10523
-Hlo 
-+1 (718) 514-1436
-Alpha job
-total $350
-150 with the credit card
-200 cash
-nodo
-```
-This format is auto-detected when both cash and credit card amounts are mentioned.
-
 ---
 
 ## 📁 Project Structure

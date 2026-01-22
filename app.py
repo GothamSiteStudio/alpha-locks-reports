@@ -33,6 +33,10 @@ def _parsed_job_to_state(pj) -> dict:
         "phone": pj.phone,
         "job_date": pj.job_date.isoformat() if getattr(pj, "job_date", None) else "",
         "technician_name": getattr(pj, "technician_name", "") or "",
+        # Split payment amounts
+        "cash_amount": getattr(pj, "cash_amount", 0.0) or 0.0,
+        "cc_amount": getattr(pj, "cc_amount", 0.0) or 0.0,
+        "check_amount": getattr(pj, "check_amount", 0.0) or 0.0,
     }
 
 
@@ -205,7 +209,27 @@ Nodi"""
                         parts_input = st.number_input("Parts ($)", min_value=0.0, value=float(job_state.get("parts", 0) or 0), step=5.0, key=f"parts_{i}")
                     with col_c:
                         pay_method = (job_state.get("payment_method") or "cash").lower()
-                        payment_input = st.selectbox("Payment", ["cash", "check", "cc"], index=["cash", "check", "cc"].index(pay_method if pay_method in ["cash", "check", "cc"] else "cash"), key=f"payment_{i}")
+                        payment_options = ["cash", "check", "cc", "split"]
+                        payment_input = st.selectbox("Payment", payment_options, index=payment_options.index(pay_method if pay_method in payment_options else "cash"), key=f"payment_{i}")
+                    
+                    # Show split payment breakdown if payment is split
+                    if payment_input == "split":
+                        st.markdown("##### 💳 Split Payment Breakdown:")
+                        split_col1, split_col2, split_col3 = st.columns(3)
+                        with split_col1:
+                            cash_amount_input = st.number_input("Cash ($)", min_value=0.0, value=float(job_state.get("cash_amount", 0) or 0), step=10.0, key=f"cash_amt_{i}")
+                        with split_col2:
+                            cc_amount_input = st.number_input("Credit Card ($)", min_value=0.0, value=float(job_state.get("cc_amount", 0) or 0), step=10.0, key=f"cc_amt_{i}")
+                        with split_col3:
+                            check_amount_input = st.number_input("Check ($)", min_value=0.0, value=float(job_state.get("check_amount", 0) or 0), step=10.0, key=f"check_amt_{i}")
+                        # Validate split amounts match total
+                        split_sum = cash_amount_input + cc_amount_input + check_amount_input
+                        if abs(split_sum - total_input) > 0.01 and split_sum > 0:
+                            st.warning(f"⚠️ Split amounts (${split_sum:.2f}) don't match total (${total_input:.2f})")
+                    else:
+                        cash_amount_input = total_input if payment_input == "cash" else 0.0
+                        cc_amount_input = total_input if payment_input == "cc" else 0.0
+                        check_amount_input = total_input if payment_input == "check" else 0.0
 
                     if st.button("🗑️ Remove this job", key=f"remove_{i}"):
                         remove_indices.append(i)
@@ -219,6 +243,9 @@ Nodi"""
                         "phone": phone_input.strip(),
                         "job_date": job_date_input.isoformat(),
                         "technician_name": tech_input.strip(),
+                        "cash_amount": cash_amount_input,
+                        "cc_amount": cc_amount_input,
+                        "check_amount": check_amount_input,
                     })
             
             if remove_indices:
@@ -262,7 +289,10 @@ Nodi"""
                         job_date=job_data['job_date'] or job_date.isoformat(),
                         created_at="",  # Will be auto-generated
                         is_paid=False,
-                        commission_rate=commission_rate
+                        commission_rate=commission_rate,
+                        cash_amount=job_data.get('cash_amount', 0.0),
+                        cc_amount=job_data.get('cc_amount', 0.0),
+                        check_amount=job_data.get('check_amount', 0.0)
                     )
                     
                     storage.add_job(stored_job)
@@ -518,6 +548,16 @@ def page_reports():
     # Convert StoredJobs to Job model for report generator
     jobs_for_report = []
     for sj in tech_jobs:
+        # Use stored split amounts if available, otherwise default based on payment method
+        if sj.payment_method == 'split':
+            cash_amt = getattr(sj, 'cash_amount', 0) or 0
+            cc_amt = getattr(sj, 'cc_amount', 0) or 0
+            check_amt = getattr(sj, 'check_amount', 0) or 0
+        else:
+            cash_amt = sj.total if sj.payment_method == 'cash' else 0
+            cc_amt = sj.total if sj.payment_method == 'cc' else 0
+            check_amt = sj.total if sj.payment_method == 'check' else 0
+        
         job = Job(
             job_date=date.fromisoformat(sj.job_date),
             address=sj.address,
@@ -526,9 +566,9 @@ def page_reports():
             payment_method=sj.payment_method,
             commission_rate=commission_rate,
             fee=0,
-            cash_amount=sj.total if sj.payment_method == 'cash' else 0,
-            cc_amount=sj.total if sj.payment_method == 'cc' else 0,
-            check_amount=sj.total if sj.payment_method == 'check' else 0
+            cash_amount=cash_amt,
+            cc_amount=cc_amt,
+            check_amount=check_amt
         )
         jobs_for_report.append(job)
     
@@ -848,6 +888,16 @@ def show_technician_details(tech_id: str):
             # Convert to Job model for report
             jobs_for_report = []
             for sj in report_jobs:
+                # Use stored split amounts if available, otherwise default based on payment method
+                if sj.payment_method == 'split':
+                    cash_amt = getattr(sj, 'cash_amount', 0) or 0
+                    cc_amt = getattr(sj, 'cc_amount', 0) or 0
+                    check_amt = getattr(sj, 'check_amount', 0) or 0
+                else:
+                    cash_amt = sj.total if sj.payment_method == 'cash' else 0
+                    cc_amt = sj.total if sj.payment_method == 'cc' else 0
+                    check_amt = sj.total if sj.payment_method == 'check' else 0
+                
                 job = Job(
                     job_date=date.fromisoformat(sj.job_date),
                     address=sj.address,
@@ -856,9 +906,9 @@ def show_technician_details(tech_id: str):
                     payment_method=sj.payment_method,
                     commission_rate=commission_rate,
                     fee=0,
-                    cash_amount=sj.total if sj.payment_method == 'cash' else 0,
-                    cc_amount=sj.total if sj.payment_method == 'cc' else 0,
-                    check_amount=sj.total if sj.payment_method == 'check' else 0
+                    cash_amount=cash_amt,
+                    cc_amount=cc_amt,
+                    check_amount=check_amt
                 )
                 jobs_for_report.append(job)
             

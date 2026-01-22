@@ -17,7 +17,7 @@ class StoredJob:
     address: str
     total: float
     parts: float
-    payment_method: str  # 'cash', 'cc', 'check'
+    payment_method: str  # 'cash', 'cc', 'check', 'split'
     description: str
     phone: str
     job_date: str  # ISO format YYYY-MM-DD
@@ -26,12 +26,20 @@ class StoredJob:
     paid_date: Optional[str] = None
     commission_rate: float = 0.50
     notes: str = ""
+    # Split payment amounts (used when payment_method is 'split')
+    cash_amount: float = 0.0
+    cc_amount: float = 0.0
+    check_amount: float = 0.0
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'StoredJob':
+        # Handle missing fields for backwards compatibility
+        data.setdefault('cash_amount', 0.0)
+        data.setdefault('cc_amount', 0.0)
+        data.setdefault('check_amount', 0.0)
         return cls(**data)
 
 
