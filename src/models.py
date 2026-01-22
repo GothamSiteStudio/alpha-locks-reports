@@ -4,7 +4,7 @@ from datetime import date
 from typing import Optional, Literal
 from decimal import Decimal
 
-PaymentMethod = Literal['cash', 'cc', 'check', 'transfer']
+PaymentMethod = Literal['cash', 'cc', 'check', 'transfer', 'split']
 
 
 @dataclass

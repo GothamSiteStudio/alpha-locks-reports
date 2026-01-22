@@ -39,6 +39,18 @@ Balance = negative (Company owes tech)
 **Example:** $1000 CC payment, $50 parts, 50% commission
 - Tech receives: (1000 - 50) × 50% + 50 = $475 + $50 = **$525**
 
+### When customer pays SPLIT (Cash + Credit Card):
+```
+Cash portion: Tech keeps commission + brings rest to company
+CC portion: Company owes tech their commission
+Balance = (Cash owed to company) - (CC commission owed to tech)
+```
+
+**Example:** $350 job split: $200 cash + $150 credit card, 0 parts, 50% commission
+- Cash portion: Tech has $200, keeps $100 (50%), owes company $100
+- CC portion: Company has $150, owes tech $75 (50%)
+- **Net Balance: Tech owes $25** ($100 - $75)
+
 ## 🤖 Intelligent Job Parsing
 
 The system includes a sophisticated message parser `src/message_parser.py` that can:
@@ -116,6 +128,19 @@ Parts $15
 Total cash 450
 Parts 20
 ```
+
+### Format 4: Split Payment (Cash + Credit Card)
+```
+55 Ridgeview Terrace, Elmsford, NY 10523
+Hlo 
++1 (718) 514-1436
+Alpha job
+total $350
+150 with the credit card
+200 cash
+nodo
+```
+This format is auto-detected when both cash and credit card amounts are mentioned.
 
 ---
 

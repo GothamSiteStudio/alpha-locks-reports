@@ -11,11 +11,15 @@ class ParsedJob:
     address: str
     total: float
     parts: float
-    payment_method: str  # 'cash', 'cc', 'check'
+    payment_method: str  # 'cash', 'cc', 'check', 'split'
     description: str = ""
     phone: str = ""
     job_date: Optional[date] = None
     technician_name: str = ""  # Auto-detected technician name
+    # Split payment amounts (when payment_method is 'split')
+    cash_amount: float = 0.0
+    cc_amount: float = 0.0
+    check_amount: float = 0.0
     
 
 class MessageParser:
@@ -66,6 +70,14 @@ class MessageParser:
     # Pattern for "Total XXX Zelle to Name" format
     TOTAL_ZELLE_PATTERN = re.compile(r'total\s*\$?(\d+(?:\.\d{2})?)\$?\s*zelle', re.IGNORECASE)
     
+    # Split payment patterns - for mixed cash/credit payments
+    # "150 with the credit card" or "150 with credit card" or "150 credit card"
+    SPLIT_CC_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:with\s*(?:the\s*)?)?(?:credit\s*card|cc)', re.IGNORECASE)
+    # "200 cash" or "$200 cash" or "200$ cash"
+    SPLIT_CASH_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?cash(?!\s*app)', re.IGNORECASE)
+    # "100 check" or "$100 check" 
+    SPLIT_CHECK_PATTERN = re.compile(r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:in\s*)?check', re.IGNORECASE)
+    
     # Parts pattern - more flexible (parts $10, parts$10, part $10, part$15)
     PARTS_PATTERN = re.compile(r'parts?\s*\$?\s*(\d+(?:\.\d{2})?)', re.IGNORECASE)
     
@@ -108,6 +120,22 @@ class MessageParser:
         if total is None or total == 0:
             return None
         
+        # Extract split payment amounts if applicable
+        cash_amount = 0.0
+        cc_amount = 0.0
+        check_amount = 0.0
+        
+        if payment_method == 'split':
+            split_result = self._extract_split_payment(text)
+            if split_result:
+                total, cash_amount, cc_amount, check_amount = split_result
+        elif payment_method == 'cash':
+            cash_amount = total
+        elif payment_method == 'cc':
+            cc_amount = total
+        elif payment_method in ['check', 'transfer']:
+            check_amount = total
+        
         # Find parts
         parts = self._extract_parts(text)
         
@@ -131,7 +159,10 @@ class MessageParser:
             description=description,
             phone=phone,
             job_date=job_date,
-            technician_name=technician_name
+            technician_name=technician_name,
+            cash_amount=cash_amount,
+            cc_amount=cc_amount,
+            check_amount=check_amount
         )
     
     def parse_multiple_jobs(self, text: str) -> List[ParsedJob]:
@@ -375,6 +406,12 @@ class MessageParser:
         def clean_price(p: str) -> float:
             return float(p.replace(',', ''))
         
+        # First, check for split payment (both cash and credit in the same job)
+        split_result = self._extract_split_payment(text)
+        if split_result:
+            # Returns (total, 'split', cash_amount, cc_amount, check_amount)
+            return split_result[0], 'split'
+        
         # Check for "Total cash XXX"
         match = self.TOTAL_CASH_PATTERN.search(text)
         if match:
@@ -433,6 +470,43 @@ class MessageParser:
             return float(price), 'cash'  # Default to cash
         
         return None, 'cash'
+    
+    def _extract_split_payment(self, text: str) -> Optional[Tuple[float, float, float, float]]:
+        """
+        Extract split payment amounts when job has multiple payment methods.
+        
+        Returns:
+            Tuple of (total, cash_amount, cc_amount, check_amount) if split payment detected,
+            None otherwise.
+        """
+        cash_amount = 0.0
+        cc_amount = 0.0
+        check_amount = 0.0
+        
+        # Find all cash amounts mentioned (e.g., "200 cash")
+        cash_matches = self.SPLIT_CASH_PATTERN.findall(text)
+        for match in cash_matches:
+            cash_amount += float(match)
+        
+        # Find all credit card amounts (e.g., "150 with the credit card")
+        cc_matches = self.SPLIT_CC_PATTERN.findall(text)
+        for match in cc_matches:
+            cc_amount += float(match)
+        
+        # Find all check amounts (e.g., "100 check")
+        check_matches = self.SPLIT_CHECK_PATTERN.findall(text)
+        for match in check_matches:
+            check_amount += float(match)
+        
+        # Check if we have at least two different payment methods
+        payment_types_found = sum([cash_amount > 0, cc_amount > 0, check_amount > 0])
+        
+        if payment_types_found >= 2:
+            # This is a split payment
+            total = cash_amount + cc_amount + check_amount
+            return (total, cash_amount, cc_amount, check_amount)
+        
+        return None
     
     def _extract_parts(self, text: str) -> float:
         """Extract parts cost."""

@@ -13,7 +13,8 @@ PAYMENT_METHODS = {
     'cash': 'Cash',
     'cc': 'Credit Card',
     'check': 'Check',
-    'transfer': 'Bank Transfer'
+    'transfer': 'Bank Transfer',
+    'split': 'Split (Cash + Card)'
 }
 
 # Payment methods that go to company (not to technician directly)
