@@ -1,6 +1,7 @@
-"""Job storage system for persistent job management"""
+"""Job storage system for persistent job management - Google Sheets Backend"""
 import json
 import uuid
+import os
 from datetime import datetime, date
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -34,27 +35,82 @@ class StoredJob:
         return cls(**data)
 
 
+def _use_google_sheets() -> bool:
+    """Determine if we should use Google Sheets or local storage"""
+    # Check for environment variable to force local storage
+    if os.environ.get('USE_LOCAL_STORAGE', '').lower() == 'true':
+        return False
+    
+    # Check if we have Google credentials available
+    try:
+        # Check Streamlit secrets
+        import streamlit as st
+        if hasattr(st, 'secrets') and 'gcp_service_account' in st.secrets:
+            return True
+    except Exception:
+        pass
+    
+    # Check environment variable
+    if os.environ.get('GOOGLE_CREDENTIALS_JSON'):
+        return True
+    
+    # Check local secrets file
+    secrets_path = Path(__file__).parent.parent / "secrets" / "google_credentials.json"
+    if secrets_path.exists():
+        return True
+    
+    return False
+
+
 class JobStorage:
-    """Manages persistent storage of jobs and technicians"""
+    """Manages persistent storage of jobs and technicians
+    
+    Automatically uses Google Sheets when credentials are available,
+    falls back to local JSON files for development.
+    """
     
     def __init__(self, data_dir: str = "data"):
         self.data_dir = Path(data_dir)
         self.jobs_file = self.data_dir / "stored_jobs.json"
         self.technicians_file = self.data_dir / "technicians.json"
         
-        # Ensure data directory exists
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._use_sheets = _use_google_sheets()
+        self._sheets_client = None
         
-        # Initialize files if they don't exist
-        if not self.jobs_file.exists():
-            self._save_jobs([])
-        if not self.technicians_file.exists():
-            self._save_technicians([])
+        if self._use_sheets:
+            try:
+                from .sheets_storage import get_sheets_client
+                self._sheets_client = get_sheets_client()
+                print("✅ Using Google Sheets storage")
+            except Exception as e:
+                print(f"⚠️ Failed to connect to Google Sheets: {e}")
+                print("📁 Falling back to local storage")
+                self._use_sheets = False
+        
+        # Ensure local data directory exists (for fallback)
+        if not self._use_sheets:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            if not self.jobs_file.exists():
+                self._save_jobs_local([])
+            if not self.technicians_file.exists():
+                self._save_technicians_local([])
     
     # ============ JOBS ============
     
     def get_all_jobs(self) -> List[StoredJob]:
         """Get all stored jobs"""
+        if self._use_sheets:
+            try:
+                records = self._sheets_client.get_all_jobs()
+                return [StoredJob.from_dict(job) for job in records if job.get('id')]
+            except Exception as e:
+                print(f"Error getting jobs from sheets: {e}")
+                return []
+        else:
+            return self._get_all_jobs_local()
+    
+    def _get_all_jobs_local(self) -> List[StoredJob]:
+        """Get all jobs from local file"""
         try:
             with open(self.jobs_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -86,8 +142,6 @@ class JobStorage:
     
     def add_job(self, job: StoredJob) -> StoredJob:
         """Add a new job"""
-        jobs = self.get_all_jobs()
-        
         # Generate ID if not provided
         if not job.id:
             job.id = str(uuid.uuid4())
@@ -96,37 +150,61 @@ class JobStorage:
         if not job.created_at:
             job.created_at = datetime.now().isoformat()
         
-        jobs.append(job)
-        self._save_jobs(jobs)
-        return job
+        if self._use_sheets:
+            try:
+                self._sheets_client.add_job(job.to_dict())
+                return job
+            except Exception as e:
+                print(f"Error adding job to sheets: {e}")
+                raise
+        else:
+            jobs = self._get_all_jobs_local()
+            jobs.append(job)
+            self._save_jobs_local(jobs)
+            return job
     
     def add_jobs(self, new_jobs: List[StoredJob]) -> List[StoredJob]:
         """Add multiple jobs at once"""
-        jobs = self.get_all_jobs()
-        
         for job in new_jobs:
             if not job.id:
                 job.id = str(uuid.uuid4())
             if not job.created_at:
                 job.created_at = datetime.now().isoformat()
-            jobs.append(job)
         
-        self._save_jobs(jobs)
-        return new_jobs
+        if self._use_sheets:
+            try:
+                self._sheets_client.add_jobs([job.to_dict() for job in new_jobs])
+                return new_jobs
+            except Exception as e:
+                print(f"Error adding jobs to sheets: {e}")
+                raise
+        else:
+            jobs = self._get_all_jobs_local()
+            jobs.extend(new_jobs)
+            self._save_jobs_local(jobs)
+            return new_jobs
     
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> Optional[StoredJob]:
         """Update a job by ID"""
-        jobs = self.get_all_jobs()
-        
-        for i, job in enumerate(jobs):
-            if job.id == job_id:
-                job_dict = job.to_dict()
-                job_dict.update(updates)
-                jobs[i] = StoredJob.from_dict(job_dict)
-                self._save_jobs(jobs)
-                return jobs[i]
-        
-        return None
+        if self._use_sheets:
+            try:
+                result = self._sheets_client.update_job(job_id, updates)
+                if result:
+                    return StoredJob.from_dict(result)
+                return None
+            except Exception as e:
+                print(f"Error updating job in sheets: {e}")
+                return None
+        else:
+            jobs = self._get_all_jobs_local()
+            for i, job in enumerate(jobs):
+                if job.id == job_id:
+                    job_dict = job.to_dict()
+                    job_dict.update(updates)
+                    jobs[i] = StoredJob.from_dict(job_dict)
+                    self._save_jobs_local(jobs)
+                    return jobs[i]
+            return None
     
     def mark_job_paid(self, job_id: str) -> Optional[StoredJob]:
         """Mark a job as paid"""
@@ -144,14 +222,21 @@ class JobStorage:
     
     def delete_job(self, job_id: str) -> bool:
         """Delete a job by ID"""
-        jobs = self.get_all_jobs()
-        original_count = len(jobs)
-        jobs = [job for job in jobs if job.id != job_id]
-        
-        if len(jobs) < original_count:
-            self._save_jobs(jobs)
-            return True
-        return False
+        if self._use_sheets:
+            try:
+                return self._sheets_client.delete_job(job_id)
+            except Exception as e:
+                print(f"Error deleting job from sheets: {e}")
+                return False
+        else:
+            jobs = self._get_all_jobs_local()
+            original_count = len(jobs)
+            jobs = [job for job in jobs if job.id != job_id]
+            
+            if len(jobs) < original_count:
+                self._save_jobs_local(jobs)
+                return True
+            return False
     
     def get_job_by_id(self, job_id: str) -> Optional[StoredJob]:
         """Get a specific job by ID"""
@@ -161,8 +246,8 @@ class JobStorage:
                 return job
         return None
     
-    def _save_jobs(self, jobs: List[StoredJob]):
-        """Save jobs to file"""
+    def _save_jobs_local(self, jobs: List[StoredJob]):
+        """Save jobs to local file"""
         with open(self.jobs_file, 'w', encoding='utf-8') as f:
             json.dump([job.to_dict() for job in jobs], f, indent=2, ensure_ascii=False)
     
@@ -170,6 +255,17 @@ class JobStorage:
     
     def get_all_technicians(self) -> List[Dict[str, Any]]:
         """Get all technicians"""
+        if self._use_sheets:
+            try:
+                return self._sheets_client.get_all_technicians()
+            except Exception as e:
+                print(f"Error getting technicians from sheets: {e}")
+                return []
+        else:
+            return self._get_all_technicians_local()
+    
+    def _get_all_technicians_local(self) -> List[Dict[str, Any]]:
+        """Get all technicians from local file"""
         try:
             with open(self.technicians_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -195,8 +291,6 @@ class JobStorage:
     
     def add_technician(self, name: str, commission_rate: float = 0.50) -> Dict[str, Any]:
         """Add a new technician"""
-        technicians = self.get_all_technicians()
-        
         # Check if technician already exists
         existing = self.get_technician_by_name(name)
         if existing:
@@ -209,9 +303,18 @@ class JobStorage:
             'created_at': datetime.now().isoformat()
         }
         
-        technicians.append(new_tech)
-        self._save_technicians(technicians)
-        return new_tech
+        if self._use_sheets:
+            try:
+                self._sheets_client.add_technician(new_tech)
+                return new_tech
+            except Exception as e:
+                print(f"Error adding technician to sheets: {e}")
+                raise
+        else:
+            technicians = self._get_all_technicians_local()
+            technicians.append(new_tech)
+            self._save_technicians_local(technicians)
+            return new_tech
     
     def get_or_create_technician(self, name: str, commission_rate: float = 0.50) -> Dict[str, Any]:
         """Get existing technician or create new one"""
@@ -222,29 +325,41 @@ class JobStorage:
     
     def update_technician(self, tech_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a technician"""
-        technicians = self.get_all_technicians()
-        
-        for i, tech in enumerate(technicians):
-            if tech['id'] == tech_id:
-                technicians[i].update(updates)
-                self._save_technicians(technicians)
-                return technicians[i]
-        
-        return None
+        if self._use_sheets:
+            try:
+                return self._sheets_client.update_technician(tech_id, updates)
+            except Exception as e:
+                print(f"Error updating technician in sheets: {e}")
+                return None
+        else:
+            technicians = self._get_all_technicians_local()
+            for i, tech in enumerate(technicians):
+                if tech['id'] == tech_id:
+                    technicians[i].update(updates)
+                    self._save_technicians_local(technicians)
+                    return technicians[i]
+            return None
     
     def delete_technician(self, tech_id: str) -> bool:
         """Delete a technician"""
-        technicians = self.get_all_technicians()
-        original_count = len(technicians)
-        technicians = [t for t in technicians if t['id'] != tech_id]
-        
-        if len(technicians) < original_count:
-            self._save_technicians(technicians)
-            return True
-        return False
+        if self._use_sheets:
+            try:
+                return self._sheets_client.delete_technician(tech_id)
+            except Exception as e:
+                print(f"Error deleting technician from sheets: {e}")
+                return False
+        else:
+            technicians = self._get_all_technicians_local()
+            original_count = len(technicians)
+            technicians = [t for t in technicians if t['id'] != tech_id]
+            
+            if len(technicians) < original_count:
+                self._save_technicians_local(technicians)
+                return True
+            return False
     
-    def _save_technicians(self, technicians: List[Dict[str, Any]]):
-        """Save technicians to file"""
+    def _save_technicians_local(self, technicians: List[Dict[str, Any]]):
+        """Save technicians to local file"""
         with open(self.technicians_file, 'w', encoding='utf-8') as f:
             json.dump(technicians, f, indent=2, ensure_ascii=False)
     

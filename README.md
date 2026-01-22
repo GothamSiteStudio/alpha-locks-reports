@@ -9,6 +9,15 @@ This system automatically calculates technician commissions based on:
 - Parts cost
 - Payment method (Cash, Credit Card, Check, Bank Transfer)
 
+## ☁️ Cloud Storage
+
+**Data is permanently stored in Google Sheets** - no more data loss when the app sleeps!
+
+The system automatically:
+- Saves all jobs and technicians to Google Sheets
+- Persists data even when Streamlit Cloud goes to sleep
+- Falls back to local JSON files for development
+
 ## 💰 Commission Logic
 
 ### When customer pays CASH to technician:
@@ -66,6 +75,7 @@ Navigate to `http://localhost:8501`
 ## 📊 Features
 
 - ✅ **Web Interface** - Easy-to-use Streamlit app
+- ✅ **Cloud Storage** - Data saved to Google Sheets (persistent!)
 - ✅ **Paste Messages** - Parse job closure messages automatically
 - ✅ **Labeled Format Support** - Parse messages with labels (Addr:, Ph:, Desc:, date:, Total cash:)
 - ✅ **Excel Import** - Upload job data from Excel/CSV files
@@ -120,12 +130,16 @@ alpha-locks-reports/
 ├── src/
 │   ├── models.py          # Data models (Job, Technician, JobResult)
 │   ├── calculator.py      # Commission calculation logic
+│   ├── job_storage.py     # Storage system (Google Sheets + local fallback)
+│   ├── sheets_storage.py  # Google Sheets API client
 │   ├── report_generator.py # Excel report generation
 │   ├── html_exporter.py   # HTML report generation
 │   └── data_loader.py     # Excel/CSV data loading
+├── secrets/               # 🔒 Credentials (not in Git!)
+│   └── google_credentials.json
 ├── data/
-│   ├── technicians.json   # Technician list
-│   └── jobs/              # Job data files
+│   ├── technicians.json   # Local backup
+│   └── stored_jobs.json   # Local backup
 ├── output/
 │   └── reports/           # Generated reports
 └── tests/

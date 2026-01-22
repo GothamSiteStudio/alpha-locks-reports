@@ -34,3 +34,11 @@ Thumbs.db
 # Temp
 *.tmp
 *.temp
+
+# Secrets - NEVER commit these!
+secrets/
+*.json
+!package.json
+google_credentials.json
+*credentials*.json
+*service_account*.json
