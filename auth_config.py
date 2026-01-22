@@ -7,10 +7,10 @@ import os
 #   python -c "import hashlib; print(hashlib.sha256('YOUR_PASSWORD'.encode()).hexdigest())"
 #
 # Current users:
-#   oren / WGuE6IrtC9PB
+#   oren
 
 USERS = {
-    "oren": "f6dbf959337af3615cc6b2221378242f512eaa15a42dea2fe58a46ac87f5e8f2",   # password: WGuE6IrtC9PB
+    "oren": "883e7a554e0ff2980e0c4440f6a4fb0da53a68f0f84e1b2e7aa359bf0f131f38",
 }
 
 # Session timeout in seconds (optional, not implemented yet)

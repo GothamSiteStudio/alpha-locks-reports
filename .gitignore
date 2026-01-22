@@ -23,6 +23,11 @@ output/reports/*.pdf
 data/jobs/*.xlsx
 data/jobs/*.csv
 !data/jobs/.gitkeep
+data/stored_jobs.json
+data/technicians.json
+
+# Excel data files
+Alpha_Reports_Data.xlsx
 
 # OS
 .DS_Store
@@ -39,6 +44,7 @@ Thumbs.db
 secrets/
 *.json
 !package.json
+!*.example.json
 google_credentials.json
 *credentials*.json
 *service_account*.json
