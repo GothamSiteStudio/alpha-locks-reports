@@ -99,13 +99,16 @@ class GoogleSheetsClient:
             # Convert types
             for record in records:
                 # Convert numeric fields
-                for field in ['total', 'parts', 'commission_rate']:
+                for field in ['total', 'parts', 'commission_rate', 'cash_amount', 'cc_amount', 'check_amount']:
                     if field in record and record[field] != '':
                         try:
                             record[field] = float(record[field])
                         except (ValueError, TypeError):
                             record[field] = 0.0
                     elif field in record:
+                        record[field] = 0.0
+                    else:
+                        # Field doesn't exist in sheet - add default
                         record[field] = 0.0
                 
                 # Convert boolean
@@ -132,7 +135,8 @@ class GoogleSheetsClient:
         if not headers:
             headers = ['id', 'technician_id', 'technician_name', 'address', 'total', 
                       'parts', 'payment_method', 'description', 'phone', 'job_date',
-                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes']
+                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes',
+                      'cash_amount', 'cc_amount', 'check_amount']
             worksheet.update('A1', [headers])
         
         # Prepare row data
@@ -160,7 +164,8 @@ class GoogleSheetsClient:
         if not headers:
             headers = ['id', 'technician_id', 'technician_name', 'address', 'total', 
                       'parts', 'payment_method', 'description', 'phone', 'job_date',
-                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes']
+                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes',
+                      'cash_amount', 'cc_amount', 'check_amount']
             worksheet.update('A1', [headers])
         
         # Prepare all rows
