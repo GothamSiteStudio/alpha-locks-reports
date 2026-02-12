@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from pathlib import Path
+import streamlit as st
 
 try:
     import gspread
@@ -328,12 +329,8 @@ class GoogleSheetsClient:
         return False
 
 
-# Singleton instance
-_sheets_client = None
-
+# Singleton instance - cached as Streamlit resource (survives reruns)
+@st.cache_resource
 def get_sheets_client() -> GoogleSheetsClient:
-    """Get or create the Google Sheets client singleton"""
-    global _sheets_client
-    if _sheets_client is None:
-        _sheets_client = GoogleSheetsClient()
-    return _sheets_client
+    """Get or create the Google Sheets client singleton (cached across reruns)."""
+    return GoogleSheetsClient()

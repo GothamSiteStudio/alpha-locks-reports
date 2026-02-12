@@ -18,8 +18,12 @@ from config import COMPANY_NAME, DEFAULT_COMMISSION_RATE
 from auth_config import verify_password
 
 
-# Initialize storage
-storage = JobStorage()
+# Initialize storage (cached across reruns)
+@st.cache_resource
+def _get_storage():
+    return JobStorage()
+
+storage = _get_storage()
 
 
 def _parsed_job_to_state(pj) -> dict:
@@ -473,17 +477,17 @@ def page_manage_jobs():
     
     with col1:
         if st.button("✅ Mark All Filtered as Paid"):
-            for job in filtered_jobs:
-                if not job.is_paid:
-                    storage.mark_job_paid(job.id)
+            unpaid_ids = [job.id for job in filtered_jobs if not job.is_paid]
+            if unpaid_ids:
+                storage.mark_jobs_paid(unpaid_ids)
             st.success("All jobs marked as paid!")
             st.rerun()
     
     with col2:
         if st.button("❌ Mark All Filtered as Unpaid"):
-            for job in filtered_jobs:
-                if job.is_paid:
-                    storage.mark_job_unpaid(job.id)
+            paid_ids = [job.id for job in filtered_jobs if job.is_paid]
+            if paid_ids:
+                storage.mark_jobs_unpaid(paid_ids)
             st.success("All jobs marked as unpaid!")
             st.rerun()
 
@@ -654,8 +658,9 @@ def page_reports():
     # Option to mark jobs as paid after generating report
     st.markdown("---")
     if not include_paid and st.button("✅ Mark All Jobs in Report as Paid", type="primary"):
-        for sj in tech_jobs:
-            storage.mark_job_paid(sj.id)
+        unpaid_ids = [sj.id for sj in tech_jobs if not sj.is_paid]
+        if unpaid_ids:
+            storage.mark_jobs_paid(unpaid_ids)
         st.success(f"Marked {len(tech_jobs)} jobs as paid!")
         st.rerun()
 
@@ -830,9 +835,9 @@ def show_technician_details(tech_id: str):
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✅ Mark All as Paid", key=f"mark_all_paid_{tech_id}"):
-                    for job in filtered_jobs:
-                        if not job.is_paid:
-                            storage.mark_job_paid(job.id)
+                    unpaid_ids = [job.id for job in filtered_jobs if not job.is_paid]
+                    if unpaid_ids:
+                        storage.mark_jobs_paid(unpaid_ids)
                     st.success("All jobs marked as paid!")
                     st.rerun()
     
@@ -961,8 +966,9 @@ def show_technician_details(tech_id: str):
             
             if not include_paid_report:
                 if st.button("✅ Mark All Jobs in Report as Paid", type="primary", key=f"mark_report_paid_{tech_id}"):
-                    for sj in report_jobs:
-                        storage.mark_job_paid(sj.id)
+                    unpaid_ids = [sj.id for sj in report_jobs if not sj.is_paid]
+                    if unpaid_ids:
+                        storage.mark_jobs_paid(unpaid_ids)
                     st.success(f"Marked {len(report_jobs)} jobs as paid!")
                     st.rerun()
 

@@ -2,10 +2,12 @@
 import json
 import uuid
 import os
+import time
 from datetime import datetime, date
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, asdict
+import streamlit as st
 
 
 @dataclass
@@ -70,11 +72,60 @@ def _use_google_sheets() -> bool:
     return False
 
 
+# ============ CACHING HELPERS ============
+
+# Cache version counters - incrementing these invalidates the cache
+if '_cache_version_jobs' not in st.session_state:
+    st.session_state._cache_version_jobs = 0
+if '_cache_version_techs' not in st.session_state:
+    st.session_state._cache_version_techs = 0
+
+
+@st.cache_data(ttl=120, show_spinner="📂 Loading jobs...")
+def _cached_get_all_jobs(_cache_version: int, use_sheets: bool, jobs_file: str) -> List[dict]:
+    """Cached fetch of all jobs. Returns list of dicts (serializable for st.cache_data)."""
+    if use_sheets:
+        try:
+            from .sheets_storage import get_sheets_client
+            client = get_sheets_client()
+            records = client.get_all_jobs()
+            return [r for r in records if r.get('id')]
+        except Exception as e:
+            print(f"Error getting jobs from sheets: {e}")
+            return []
+    else:
+        try:
+            with open(jobs_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
+
+
+@st.cache_data(ttl=120, show_spinner="📂 Loading technicians...")
+def _cached_get_all_technicians(_cache_version: int, use_sheets: bool, technicians_file: str) -> List[Dict[str, Any]]:
+    """Cached fetch of all technicians."""
+    if use_sheets:
+        try:
+            from .sheets_storage import get_sheets_client
+            client = get_sheets_client()
+            return client.get_all_technicians()
+        except Exception as e:
+            print(f"Error getting technicians from sheets: {e}")
+            return []
+    else:
+        try:
+            with open(technicians_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except (json.JSONDecodeError, FileNotFoundError):
+            return []
+
+
 class JobStorage:
     """Manages persistent storage of jobs and technicians
     
     Automatically uses Google Sheets when credentials are available,
     falls back to local JSON files for development.
+    Uses Streamlit caching to avoid redundant API calls.
     """
     
     def __init__(self, data_dir: str = "data"):
@@ -103,19 +154,24 @@ class JobStorage:
             if not self.technicians_file.exists():
                 self._save_technicians_local([])
     
+    def _invalidate_jobs_cache(self):
+        """Increment the jobs cache version to force a refresh on next read."""
+        st.session_state._cache_version_jobs += 1
+    
+    def _invalidate_techs_cache(self):
+        """Increment the technicians cache version to force a refresh on next read."""
+        st.session_state._cache_version_techs += 1
+    
     # ============ JOBS ============
     
     def get_all_jobs(self) -> List[StoredJob]:
-        """Get all stored jobs"""
-        if self._use_sheets:
-            try:
-                records = self._sheets_client.get_all_jobs()
-                return [StoredJob.from_dict(job) for job in records if job.get('id')]
-            except Exception as e:
-                print(f"Error getting jobs from sheets: {e}")
-                return []
-        else:
-            return self._get_all_jobs_local()
+        """Get all stored jobs (cached - avoids redundant API calls)"""
+        raw = _cached_get_all_jobs(
+            st.session_state._cache_version_jobs,
+            self._use_sheets,
+            str(self.jobs_file)
+        )
+        return [StoredJob.from_dict(job) for job in raw if job.get('id')]
     
     def _get_all_jobs_local(self) -> List[StoredJob]:
         """Get all jobs from local file"""
@@ -161,6 +217,7 @@ class JobStorage:
         if self._use_sheets:
             try:
                 self._sheets_client.add_job(job.to_dict())
+                self._invalidate_jobs_cache()
                 return job
             except Exception as e:
                 print(f"Error adding job to sheets: {e}")
@@ -169,6 +226,7 @@ class JobStorage:
             jobs = self._get_all_jobs_local()
             jobs.append(job)
             self._save_jobs_local(jobs)
+            self._invalidate_jobs_cache()
             return job
     
     def add_jobs(self, new_jobs: List[StoredJob]) -> List[StoredJob]:
@@ -182,6 +240,7 @@ class JobStorage:
         if self._use_sheets:
             try:
                 self._sheets_client.add_jobs([job.to_dict() for job in new_jobs])
+                self._invalidate_jobs_cache()
                 return new_jobs
             except Exception as e:
                 print(f"Error adding jobs to sheets: {e}")
@@ -190,6 +249,7 @@ class JobStorage:
             jobs = self._get_all_jobs_local()
             jobs.extend(new_jobs)
             self._save_jobs_local(jobs)
+            self._invalidate_jobs_cache()
             return new_jobs
     
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> Optional[StoredJob]:
@@ -198,6 +258,7 @@ class JobStorage:
             try:
                 result = self._sheets_client.update_job(job_id, updates)
                 if result:
+                    self._invalidate_jobs_cache()
                     return StoredJob.from_dict(result)
                 return None
             except Exception as e:
@@ -211,6 +272,7 @@ class JobStorage:
                     job_dict.update(updates)
                     jobs[i] = StoredJob.from_dict(job_dict)
                     self._save_jobs_local(jobs)
+                    self._invalidate_jobs_cache()
                     return jobs[i]
             return None
     
@@ -228,11 +290,73 @@ class JobStorage:
             'paid_date': None
         })
     
+    def mark_jobs_paid(self, job_ids: List[str]) -> int:
+        """Mark multiple jobs as paid in one batch (minimizes API calls)."""
+        if not job_ids:
+            return 0
+        paid_date = datetime.now().isoformat()
+        if self._use_sheets:
+            count = 0
+            for jid in job_ids:
+                try:
+                    self._sheets_client.update_job(jid, {'is_paid': True, 'paid_date': paid_date})
+                    count += 1
+                except Exception:
+                    pass
+            self._invalidate_jobs_cache()
+            return count
+        else:
+            jobs = self._get_all_jobs_local()
+            count = 0
+            ids_set = set(job_ids)
+            for i, job in enumerate(jobs):
+                if job.id in ids_set:
+                    job_dict = job.to_dict()
+                    job_dict['is_paid'] = True
+                    job_dict['paid_date'] = paid_date
+                    jobs[i] = StoredJob.from_dict(job_dict)
+                    count += 1
+            self._save_jobs_local(jobs)
+            self._invalidate_jobs_cache()
+            return count
+    
+    def mark_jobs_unpaid(self, job_ids: List[str]) -> int:
+        """Mark multiple jobs as unpaid in one batch."""
+        if not job_ids:
+            return 0
+        if self._use_sheets:
+            count = 0
+            for jid in job_ids:
+                try:
+                    self._sheets_client.update_job(jid, {'is_paid': False, 'paid_date': None})
+                    count += 1
+                except Exception:
+                    pass
+            self._invalidate_jobs_cache()
+            return count
+        else:
+            jobs = self._get_all_jobs_local()
+            count = 0
+            ids_set = set(job_ids)
+            for i, job in enumerate(jobs):
+                if job.id in ids_set:
+                    job_dict = job.to_dict()
+                    job_dict['is_paid'] = False
+                    job_dict['paid_date'] = None
+                    jobs[i] = StoredJob.from_dict(job_dict)
+                    count += 1
+            self._save_jobs_local(jobs)
+            self._invalidate_jobs_cache()
+            return count
+    
     def delete_job(self, job_id: str) -> bool:
         """Delete a job by ID"""
         if self._use_sheets:
             try:
-                return self._sheets_client.delete_job(job_id)
+                result = self._sheets_client.delete_job(job_id)
+                if result:
+                    self._invalidate_jobs_cache()
+                return result
             except Exception as e:
                 print(f"Error deleting job from sheets: {e}")
                 return False
@@ -243,6 +367,7 @@ class JobStorage:
             
             if len(jobs) < original_count:
                 self._save_jobs_local(jobs)
+                self._invalidate_jobs_cache()
                 return True
             return False
     
@@ -262,15 +387,12 @@ class JobStorage:
     # ============ TECHNICIANS ============
     
     def get_all_technicians(self) -> List[Dict[str, Any]]:
-        """Get all technicians"""
-        if self._use_sheets:
-            try:
-                return self._sheets_client.get_all_technicians()
-            except Exception as e:
-                print(f"Error getting technicians from sheets: {e}")
-                return []
-        else:
-            return self._get_all_technicians_local()
+        """Get all technicians (cached - avoids redundant API calls)"""
+        return _cached_get_all_technicians(
+            st.session_state._cache_version_techs,
+            self._use_sheets,
+            str(self.technicians_file)
+        )
     
     def _get_all_technicians_local(self) -> List[Dict[str, Any]]:
         """Get all technicians from local file"""
@@ -314,6 +436,7 @@ class JobStorage:
         if self._use_sheets:
             try:
                 self._sheets_client.add_technician(new_tech)
+                self._invalidate_techs_cache()
                 return new_tech
             except Exception as e:
                 print(f"Error adding technician to sheets: {e}")
@@ -322,6 +445,7 @@ class JobStorage:
             technicians = self._get_all_technicians_local()
             technicians.append(new_tech)
             self._save_technicians_local(technicians)
+            self._invalidate_techs_cache()
             return new_tech
     
     def get_or_create_technician(self, name: str, commission_rate: float = 0.50) -> Dict[str, Any]:
@@ -335,7 +459,10 @@ class JobStorage:
         """Update a technician"""
         if self._use_sheets:
             try:
-                return self._sheets_client.update_technician(tech_id, updates)
+                result = self._sheets_client.update_technician(tech_id, updates)
+                if result:
+                    self._invalidate_techs_cache()
+                return result
             except Exception as e:
                 print(f"Error updating technician in sheets: {e}")
                 return None
@@ -345,6 +472,7 @@ class JobStorage:
                 if tech['id'] == tech_id:
                     technicians[i].update(updates)
                     self._save_technicians_local(technicians)
+                    self._invalidate_techs_cache()
                     return technicians[i]
             return None
     
@@ -352,7 +480,10 @@ class JobStorage:
         """Delete a technician"""
         if self._use_sheets:
             try:
-                return self._sheets_client.delete_technician(tech_id)
+                result = self._sheets_client.delete_technician(tech_id)
+                if result:
+                    self._invalidate_techs_cache()
+                return result
             except Exception as e:
                 print(f"Error deleting technician from sheets: {e}")
                 return False
@@ -363,6 +494,7 @@ class JobStorage:
             
             if len(technicians) < original_count:
                 self._save_technicians_local(technicians)
+                self._invalidate_techs_cache()
                 return True
             return False
     
