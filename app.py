@@ -2,6 +2,7 @@
 Alpha Locks Reports - Main Application with Job Management
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, date, timedelta
 from io import BytesIO
@@ -24,6 +25,29 @@ def _get_storage():
     return JobStorage()
 
 storage = _get_storage()
+
+
+def inject_matomo():
+    """Inject Matomo analytics tracking code."""
+    components.html(
+        """
+        <!-- Matomo -->
+        <script>
+          var _paq = window._paq = window._paq || [];
+          _paq.push(['trackPageView']);
+          _paq.push(['enableLinkTracking']);
+          (function() {
+            var u="https://alphalockandsafe.matomo.cloud/";
+            _paq.push(['setTrackerUrl', u+'matomo.php']);
+            _paq.push(['setSiteId', '5']);
+            var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+            g.async=true; g.src='https://cdn.matomo.cloud/alphalockandsafe.matomo.cloud/matomo.js'; s.parentNode.insertBefore(g,s);
+          })();
+        </script>
+        <!-- End Matomo Code -->
+        """,
+        height=0,
+    )
 
 
 def _parsed_job_to_state(pj) -> dict:
@@ -987,6 +1011,9 @@ def main():
         page_icon="🔐",
         layout="wide"
     )
+    
+    # Analytics
+    inject_matomo()
     
     # Sidebar navigation
     st.sidebar.title(f"🔐 {COMPANY_NAME}")
