@@ -759,29 +759,66 @@ def page_reports():
     df = generator.to_dataframe()
     st.dataframe(df, use_container_width=True)
     
-    # Editable job list
-    with st.expander("📝 Edit Individual Jobs", expanded=False):
+    # Editable job list with payment controls
+    unpaid_in_report = [sj for sj in tech_jobs if not sj.is_paid]
+    paid_in_report = [sj for sj in tech_jobs if sj.is_paid]
+    expander_label = f"📝 Edit Individual Jobs ({len(unpaid_in_report)} unpaid, {len(paid_in_report)} paid)"
+    with st.expander(expander_label, expanded=False):
+        # Track selected jobs for batch payment
+        selected_for_payment = []
+        
         for sj in tech_jobs:
             if st.session_state.get(f"editing_{sj.id}", False):
                 render_edit_form(sj, "report")
             else:
                 with st.container():
-                    rc1, rc2, rc3 = st.columns([4, 2, 1])
+                    # Layout: checkbox | address+status | amount | paid toggle | edit
+                    if not sj.is_paid:
+                        rc_chk, rc1, rc2, rc_pay, rc3 = st.columns([0.5, 3.5, 1.5, 1, 0.5])
+                    else:
+                        rc1, rc2, rc_pay, rc3 = st.columns([4, 1.5, 1, 0.5])
+                        rc_chk = None
+                    
+                    # Checkbox for unpaid jobs
+                    if rc_chk is not None:
+                        with rc_chk:
+                            if st.checkbox("", key=f"sel_pay_{sj.id}", label_visibility="collapsed"):
+                                selected_for_payment.append(sj.id)
+                    
                     with rc1:
-                        st.markdown(f"**{sj.address[:40]}**{'...' if len(sj.address) > 40 else ''}")
+                        status_icon = "✅" if sj.is_paid else "⏳"
+                        st.markdown(f"{status_icon} **{sj.address[:40]}**{'...' if len(sj.address) > 40 else ''}")
                         cap = f"📅 {sj.job_date} | {sj.payment_method.upper()}"
                         if getattr(sj, 'tech_amount', None):
                             cap += f" | 💰 Tech: ${sj.tech_amount:.0f}"
+                        if sj.is_paid and getattr(sj, 'paid_date', None):
+                            cap += f" | Paid: {sj.paid_date[:10]}"
                         st.caption(cap)
                     with rc2:
                         st.markdown(f"${sj.total:,.0f}")
                         if sj.parts > 0:
                             st.caption(f"Parts: ${sj.parts:,.0f}")
+                    with rc_pay:
+                        if sj.is_paid:
+                            if st.button("❌", key=f"unpaid_r_{sj.id}", help="Mark as unpaid"):
+                                storage.mark_job_unpaid(sj.id)
+                                st.rerun()
+                        else:
+                            if st.button("✅", key=f"paid_r_{sj.id}", help="Mark as paid"):
+                                storage.mark_job_paid(sj.id)
+                                st.rerun()
                     with rc3:
                         if st.button("✏️", key=f"edit_r_{sj.id}", help="Edit job"):
                             st.session_state[f"editing_{sj.id}"] = True
                             st.rerun()
             st.markdown("---")
+        
+        # Batch mark selected as paid
+        if selected_for_payment:
+            if st.button(f"✅ Mark {len(selected_for_payment)} Selected Jobs as Paid", type="primary"):
+                storage.mark_jobs_paid(selected_for_payment)
+                st.success(f"Marked {len(selected_for_payment)} jobs as paid!")
+                st.rerun()
     
     # Summary
     summary = generator.calculator.calculate_summary(generator.results)
