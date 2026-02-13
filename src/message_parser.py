@@ -20,6 +20,7 @@ class ParsedJob:
     cash_amount: float = 0.0
     cc_amount: float = 0.0
     check_amount: float = 0.0
+    tech_amount: Optional[float] = None  # Fixed tech amount override (e.g., "120$Tech")
     
 
 class MessageParser:
@@ -83,6 +84,14 @@ class MessageParser:
     
     # Alpha job marker
     ALPHA_JOB_PATTERN = re.compile(r'alpha\s*job', re.IGNORECASE)
+    
+    # Tech amount patterns - fixed dollar amount for technician
+    # Matches: "120$Tech", "120 tech", "$120tech", "120 for tech", "Tech 120", "tech:120"
+    TECH_AMOUNT_PATTERN = re.compile(
+        r'\$?(\d+(?:\.\d{2})?)\$?\s*(?:for\s+)?tech\b(?!nician)|'
+        r'\btech\s*:?\s*\$?(\d+(?:\.\d{2})?)\$?',
+        re.IGNORECASE
+    )
     
     # Labeled format patterns (Addr:, Ph:, Desc:, Occu:, date:)
     ADDR_LABEL_PATTERN = re.compile(r'addr(?:ess)?\s*:\s*(.+)', re.IGNORECASE)
@@ -151,6 +160,9 @@ class MessageParser:
         # Find technician name (last non-empty line that's not pricing info)
         technician_name = self._extract_technician_name(text)
         
+        # Find fixed tech amount override (e.g., "120$Tech")
+        tech_amount = self._extract_tech_amount(text)
+        
         return ParsedJob(
             address=address,
             total=total,
@@ -162,7 +174,8 @@ class MessageParser:
             technician_name=technician_name,
             cash_amount=cash_amount,
             cc_amount=cc_amount,
-            check_amount=check_amount
+            check_amount=check_amount,
+            tech_amount=tech_amount
         )
     
     def parse_multiple_jobs(self, text: str) -> List[ParsedJob]:
@@ -622,6 +635,39 @@ class MessageParser:
                     description_lines.append(line_stripped)
         
         return ' | '.join(description_lines[:3])  # Max 3 lines
+    
+    def _extract_tech_amount(self, text: str) -> Optional[float]:
+        """
+        Extract fixed technician amount from the message.
+        Matches patterns like: "120$Tech", "Tech 120", "120 for tech", "tech:120"
+        When present, this overrides the percentage-based commission.
+        """
+        for line in text.strip().split('\n'):
+            line_stripped = line.strip()
+            if not line_stripped:
+                continue
+            
+            # Skip long lines (likely addresses or descriptions)
+            if len(line_stripped) > 30:
+                continue
+            
+            # Skip lines that are clearly other patterns
+            line_lower = line_stripped.lower()
+            if any(kw in line_lower for kw in ['total', 'parts', 'part ', 'alpha', 'zelle', 'addr', 'desc']):
+                continue
+            
+            # Skip lines that look like addresses (contain street suffixes)
+            if re.search(r'\b(?:st|street|ave|avenue|rd|road|blvd|dr|drive|ln|lane|way|pl|place|ct|court|park)\b', line_lower):
+                continue
+            
+            match = self.TECH_AMOUNT_PATTERN.search(line_stripped)
+            if match:
+                # Group 1: number before "tech", Group 2: number after "tech"
+                amount_str = match.group(1) or match.group(2)
+                if amount_str:
+                    return float(amount_str)
+        
+        return None
     
     def _extract_technician_name(self, text: str) -> str:
         """

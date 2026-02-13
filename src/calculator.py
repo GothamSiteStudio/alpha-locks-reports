@@ -45,11 +45,30 @@ class CommissionCalculator:
         if job.payment_method == 'split':
             return self._calculate_split_payment(job, net_amount)
         
-        # Technician's commission on net amount
-        commission = net_amount * job.commission_rate
-        
         # Determine payment flow based on payment method
         is_company_payment = job.payment_method in COMPANY_PAYMENT_METHODS
+        
+        # Check for fixed tech amount override
+        if job.tech_amount is not None:
+            tech_amount = job.tech_amount
+            if is_company_payment:
+                # Company received payment → owes tech fixed amount + parts
+                tech_profit = tech_amount + job.parts
+                balance = -tech_profit
+            else:
+                # Tech received cash → keeps fixed amount, brings rest
+                tech_profit = tech_amount
+                balance = job.total - job.parts - tech_amount
+            
+            return JobResult(
+                job=job,
+                net_amount=net_amount,
+                tech_profit=tech_profit,
+                balance=balance
+            )
+        
+        # Technician's commission on net amount
+        commission = net_amount * job.commission_rate
         
         if is_company_payment:
             # Company received payment
@@ -87,6 +106,28 @@ class CommissionCalculator:
         cc_amount = job.cc_amount
         check_amount = job.check_amount
         company_amount = cc_amount + check_amount  # Amount company receives
+        
+        # Fixed tech amount override for split payments
+        if job.tech_amount is not None:
+            tech_amount = job.tech_amount
+            total_tech_owed = tech_amount + job.parts
+            
+            # Tech keeps from cash up to total_tech_owed
+            tech_keeps_from_cash = min(cash_amount, total_tech_owed)
+            tech_owes_from_cash = cash_amount - tech_keeps_from_cash
+            
+            # Company owes tech whatever isn't covered by cash
+            company_owes_to_tech = max(0, total_tech_owed - cash_amount)
+            
+            tech_profit = tech_amount + job.parts
+            balance = tech_owes_from_cash - company_owes_to_tech
+            
+            return JobResult(
+                job=job,
+                net_amount=net_amount,
+                tech_profit=tech_profit,
+                balance=balance
+            )
         
         # Commission rate
         rate = job.commission_rate

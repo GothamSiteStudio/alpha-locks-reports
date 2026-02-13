@@ -36,6 +36,9 @@ class Job:
     cc_amount: float = 0.0
     check_amount: float = 0.0
     
+    # Fixed tech amount override (when set, overrides commission_rate)
+    tech_amount: Optional[float] = None
+    
     def __post_init__(self):
         # If single payment method, set the corresponding amount
         if self.payment_method == 'cash' and self.cash_amount == 0:

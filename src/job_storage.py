@@ -32,6 +32,8 @@ class StoredJob:
     cash_amount: float = 0.0
     cc_amount: float = 0.0
     check_amount: float = 0.0
+    # Fixed tech amount override (e.g., "120$Tech")
+    tech_amount: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -42,6 +44,16 @@ class StoredJob:
         data.setdefault('cash_amount', 0.0)
         data.setdefault('cc_amount', 0.0)
         data.setdefault('check_amount', 0.0)
+        # tech_amount: normalize 0/empty to None
+        ta = data.get('tech_amount')
+        if ta is not None:
+            try:
+                ta = float(ta)
+                data['tech_amount'] = ta if ta > 0 else None
+            except (TypeError, ValueError):
+                data['tech_amount'] = None
+        else:
+            data.setdefault('tech_amount', None)
         return cls(**data)
 
 

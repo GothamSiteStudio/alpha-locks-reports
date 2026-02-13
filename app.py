@@ -65,7 +65,106 @@ def _parsed_job_to_state(pj) -> dict:
         "cash_amount": getattr(pj, "cash_amount", 0.0) or 0.0,
         "cc_amount": getattr(pj, "cc_amount", 0.0) or 0.0,
         "check_amount": getattr(pj, "check_amount", 0.0) or 0.0,
+        "tech_amount": getattr(pj, "tech_amount", None),
     }
+
+
+def render_edit_form(job, key_prefix: str):
+    """Render inline edit form for a stored job. Used across all pages."""
+    with st.container(border=True):
+        st.markdown(f"#### ✏️ Editing Job")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            new_address = st.text_input("Address", value=job.address, key=f"e_addr_{key_prefix}_{job.id}")
+            new_description = st.text_input("Description", value=job.description or "", key=f"e_desc_{key_prefix}_{job.id}")
+            new_phone = st.text_input("Phone", value=job.phone or "", key=f"e_phone_{key_prefix}_{job.id}")
+            try:
+                date_val = date.fromisoformat(job.job_date)
+            except (ValueError, TypeError):
+                date_val = date.today()
+            new_date = st.date_input("Date", value=date_val, key=f"e_date_{key_prefix}_{job.id}")
+        
+        with col2:
+            technicians = storage.get_all_technicians()
+            tech_names = [t['name'] for t in technicians]
+            if job.technician_name and job.technician_name not in tech_names:
+                tech_names.append(job.technician_name)
+            tech_idx = tech_names.index(job.technician_name) if job.technician_name in tech_names else 0
+            new_tech_name = st.selectbox("Technician", tech_names, index=tech_idx, key=f"e_tech_{key_prefix}_{job.id}")
+            
+            new_total = st.number_input("Total ($)", min_value=0.0, value=float(job.total), step=10.0, key=f"e_total_{key_prefix}_{job.id}")
+            new_parts = st.number_input("Parts ($)", min_value=0.0, value=float(job.parts), step=5.0, key=f"e_parts_{key_prefix}_{job.id}")
+            
+            payment_options = ["cash", "check", "cc", "split"]
+            pay_idx = payment_options.index(job.payment_method) if job.payment_method in payment_options else 0
+            new_payment = st.selectbox("Payment Method", payment_options, index=pay_idx, key=f"e_pay_{key_prefix}_{job.id}")
+        
+        # Split amounts
+        if new_payment == "split":
+            st.markdown("##### 💳 Split Breakdown:")
+            sc1, sc2, sc3 = st.columns(3)
+            with sc1:
+                new_cash = st.number_input("Cash ($)", min_value=0.0, value=float(job.cash_amount or 0), step=10.0, key=f"e_cash_{key_prefix}_{job.id}")
+            with sc2:
+                new_cc = st.number_input("CC ($)", min_value=0.0, value=float(job.cc_amount or 0), step=10.0, key=f"e_cc_{key_prefix}_{job.id}")
+            with sc3:
+                new_check_amt = st.number_input("Check ($)", min_value=0.0, value=float(job.check_amount or 0), step=10.0, key=f"e_chk_{key_prefix}_{job.id}")
+            split_sum = new_cash + new_cc + new_check_amt
+            if abs(split_sum - new_total) > 0.01 and split_sum > 0:
+                st.warning(f"⚠️ Split amounts (${split_sum:.2f}) don't match total (${new_total:.2f})")
+        else:
+            new_cash = new_total if new_payment == "cash" else 0.0
+            new_cc = new_total if new_payment == "cc" else 0.0
+            new_check_amt = new_total if new_payment in ["check", "transfer"] else 0.0
+        
+        # Commission / Tech Amount
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            new_rate = st.slider("Commission Rate (%)", 0, 100, int((job.commission_rate or 0.5) * 100), 5, key=f"e_rate_{key_prefix}_{job.id}") / 100
+        with cc2:
+            ta_val = float(job.tech_amount) if getattr(job, 'tech_amount', None) else 0.0
+            new_tech_amount = st.number_input(
+                "Tech Fixed Amount ($)", min_value=0.0, value=ta_val, step=10.0,
+                key=f"e_ta_{key_prefix}_{job.id}",
+                help="If > 0, overrides commission rate with a fixed dollar amount for the tech"
+            )
+        
+        new_notes = st.text_area("Notes", value=job.notes or "", key=f"e_notes_{key_prefix}_{job.id}", height=68)
+        
+        # Save / Cancel
+        bcol1, bcol2, bcol3 = st.columns([1, 1, 3])
+        with bcol1:
+            if st.button("💾 Save", key=f"e_save_{key_prefix}_{job.id}", type="primary"):
+                updates = {
+                    'address': new_address.strip(),
+                    'total': new_total,
+                    'parts': new_parts,
+                    'payment_method': new_payment,
+                    'description': new_description.strip(),
+                    'phone': new_phone.strip(),
+                    'job_date': new_date.isoformat(),
+                    'commission_rate': new_rate,
+                    'tech_amount': new_tech_amount if new_tech_amount > 0 else None,
+                    'notes': new_notes.strip(),
+                    'cash_amount': new_cash,
+                    'cc_amount': new_cc,
+                    'check_amount': new_check_amt,
+                }
+                # Handle technician change
+                if new_tech_name != job.technician_name:
+                    tech_obj = storage.get_or_create_technician(new_tech_name.strip())
+                    updates['technician_id'] = tech_obj['id']
+                    updates['technician_name'] = tech_obj['name']
+                
+                storage.update_job(job.id, updates)
+                st.session_state[f"editing_{job.id}"] = False
+                st.success("✅ Job updated!")
+                st.rerun()
+        with bcol2:
+            if st.button("❌ Cancel", key=f"e_cancel_{key_prefix}_{job.id}"):
+                st.session_state[f"editing_{job.id}"] = False
+                st.rerun()
 
 
 def login_page():
@@ -259,6 +358,23 @@ Nodi"""
                         cc_amount_input = total_input if payment_input == "cc" else 0.0
                         check_amount_input = total_input if payment_input == "check" else 0.0
 
+                    # Commission / Tech Amount override
+                    comm_col1, comm_col2 = st.columns(2)
+                    with comm_col1:
+                        job_commission = st.slider(
+                            "Commission Rate (%)", 0, 100, int(commission_rate * 100), 5,
+                            key=f"comm_{i}"
+                        ) / 100
+                    with comm_col2:
+                        tech_amt_default = float(job_state.get("tech_amount") or 0)
+                        tech_amount_input = st.number_input(
+                            "Tech Fixed Amount ($)", min_value=0.0, value=tech_amt_default, step=10.0,
+                            key=f"techamt_{i}",
+                            help="If set (>0), overrides commission rate with a fixed dollar amount for the tech"
+                        )
+                    if tech_amt_default > 0:
+                        st.info(f"💡 Fixed tech amount detected: **${tech_amt_default:.0f}** (overrides {int(commission_rate*100)}% rate)")
+
                     if st.button("🗑️ Remove this job", key=f"remove_{i}"):
                         remove_indices.append(i)
                     
@@ -274,6 +390,8 @@ Nodi"""
                         "cash_amount": cash_amount_input,
                         "cc_amount": cc_amount_input,
                         "check_amount": check_amount_input,
+                        "tech_amount": tech_amount_input if tech_amount_input > 0 else None,
+                        "commission_rate": job_commission,
                     })
             
             if remove_indices:
@@ -317,10 +435,11 @@ Nodi"""
                         job_date=job_data['job_date'] or job_date.isoformat(),
                         created_at="",  # Will be auto-generated
                         is_paid=False,
-                        commission_rate=commission_rate,
+                        commission_rate=job_data.get('commission_rate', commission_rate),
                         cash_amount=job_data.get('cash_amount', 0.0),
                         cc_amount=job_data.get('cc_amount', 0.0),
-                        check_amount=job_data.get('check_amount', 0.0)
+                        check_amount=job_data.get('check_amount', 0.0),
+                        tech_amount=job_data.get('tech_amount')
                     )
                     
                     storage.add_job(stored_job)
@@ -353,6 +472,16 @@ Nodi"""
                 manual_phone = st.text_input("Phone (optional)")
                 manual_description = st.text_input("Description (optional)")
             
+            col3, col4 = st.columns(2)
+            with col3:
+                manual_commission = st.slider("Commission Rate (%)", 0, 100, int(commission_rate * 100), 5, key="manual_comm") / 100
+            with col4:
+                manual_tech_amount = st.number_input(
+                    "Tech Fixed Amount ($)", min_value=0.0, value=0.0, step=10.0,
+                    key="manual_techamt",
+                    help="If set (>0), overrides commission rate with a fixed dollar amount"
+                )
+            
             submitted = st.form_submit_button("💾 Save Job", type="primary")
             
             if submitted:
@@ -377,7 +506,8 @@ Nodi"""
                         job_date=manual_date.isoformat(),
                         created_at="",
                         is_paid=False,
-                        commission_rate=commission_rate
+                        commission_rate=manual_commission,
+                        tech_amount=manual_tech_amount if manual_tech_amount > 0 else None
                     )
                     
                     storage.add_job(stored_job)
@@ -461,39 +591,51 @@ def page_manage_jobs():
     
     # Display jobs
     for job in filtered_jobs:
-        with st.container():
-            col1, col2, col3, col4, col5 = st.columns([3, 2, 1, 1, 1])
-            
-            with col1:
-                status_icon = "✅" if job.is_paid else "⏳"
-                st.markdown(f"**{status_icon} {job.address[:40]}**{'...' if len(job.address) > 40 else ''}")
-                st.caption(f"📅 {job.job_date} | 👤 {job.technician_name}")
-            
-            with col2:
-                st.markdown(f"**${job.total:,.0f}**")
-                if job.parts > 0:
-                    st.caption(f"Parts: ${job.parts:,.0f}")
-            
-            with col3:
-                st.markdown(f"**{job.payment_method.upper()}**")
-            
-            with col4:
-                if job.is_paid:
-                    if st.button("❌ Unpaid", key=f"unpaid_{job.id}"):
-                        storage.mark_job_unpaid(job.id)
-                        st.rerun()
-                else:
-                    if st.button("✅ Paid", key=f"paid_{job.id}"):
-                        storage.mark_job_paid(job.id)
-                        st.rerun()
-            
-            with col5:
-                if st.button("🗑️", key=f"delete_{job.id}"):
-                    storage.delete_job(job.id)
-                    st.success("Job deleted!")
-                    st.rerun()
-            
+        if st.session_state.get(f"editing_{job.id}", False):
+            render_edit_form(job, "manage")
             st.markdown("---")
+        else:
+            with st.container():
+                col1, col2, col3, col4, col5, col6 = st.columns([3, 2, 1, 1, 1, 1])
+                
+                with col1:
+                    status_icon = "✅" if job.is_paid else "⏳"
+                    st.markdown(f"**{status_icon} {job.address[:40]}**{'...' if len(job.address) > 40 else ''}")
+                    caption_parts = [f"📅 {job.job_date}", f"👤 {job.technician_name}"]
+                    if getattr(job, 'tech_amount', None):
+                        caption_parts.append(f"💰 Tech: ${job.tech_amount:.0f}")
+                    st.caption(" | ".join(caption_parts))
+                
+                with col2:
+                    st.markdown(f"**${job.total:,.0f}**")
+                    if job.parts > 0:
+                        st.caption(f"Parts: ${job.parts:,.0f}")
+                
+                with col3:
+                    st.markdown(f"**{job.payment_method.upper()}**")
+                
+                with col4:
+                    if st.button("✏️", key=f"edit_{job.id}", help="Edit job"):
+                        st.session_state[f"editing_{job.id}"] = True
+                        st.rerun()
+                
+                with col5:
+                    if job.is_paid:
+                        if st.button("❌ Unpaid", key=f"unpaid_{job.id}"):
+                            storage.mark_job_unpaid(job.id)
+                            st.rerun()
+                    else:
+                        if st.button("✅ Paid", key=f"paid_{job.id}"):
+                            storage.mark_job_paid(job.id)
+                            st.rerun()
+                
+                with col6:
+                    if st.button("🗑️", key=f"delete_{job.id}"):
+                        storage.delete_job(job.id)
+                        st.success("Job deleted!")
+                        st.rerun()
+                
+                st.markdown("---")
     
     # Bulk actions
     st.markdown("### ⚡ Bulk Actions")
@@ -596,7 +738,8 @@ def page_reports():
             fee=0,
             cash_amount=cash_amt,
             cc_amount=cc_amt,
-            check_amount=check_amt
+            check_amount=check_amt,
+            tech_amount=getattr(sj, 'tech_amount', None)
         )
         jobs_for_report.append(job)
     
@@ -615,6 +758,30 @@ def page_reports():
     
     df = generator.to_dataframe()
     st.dataframe(df, use_container_width=True)
+    
+    # Editable job list
+    with st.expander("📝 Edit Individual Jobs", expanded=False):
+        for sj in tech_jobs:
+            if st.session_state.get(f"editing_{sj.id}", False):
+                render_edit_form(sj, "report")
+            else:
+                with st.container():
+                    rc1, rc2, rc3 = st.columns([4, 2, 1])
+                    with rc1:
+                        st.markdown(f"**{sj.address[:40]}**{'...' if len(sj.address) > 40 else ''}")
+                        cap = f"📅 {sj.job_date} | {sj.payment_method.upper()}"
+                        if getattr(sj, 'tech_amount', None):
+                            cap += f" | 💰 Tech: ${sj.tech_amount:.0f}"
+                        st.caption(cap)
+                    with rc2:
+                        st.markdown(f"${sj.total:,.0f}")
+                        if sj.parts > 0:
+                            st.caption(f"Parts: ${sj.parts:,.0f}")
+                    with rc3:
+                        if st.button("✏️", key=f"edit_r_{sj.id}", help="Edit job"):
+                            st.session_state[f"editing_{sj.id}"] = True
+                            st.rerun()
+            st.markdown("---")
     
     # Summary
     summary = generator.calculator.calculate_summary(generator.results)
@@ -823,34 +990,45 @@ def show_technician_details(tech_id: str):
             st.markdown(f"**{len(filtered_jobs)} jobs**")
             
             for job in filtered_jobs:
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([4, 2, 1, 1])
-                    
-                    with col1:
-                        status = "✅" if job.is_paid else "⏳"
-                        addr_display = job.address[:35] + "..." if len(job.address) > 35 else job.address
-                        st.markdown(f"{status} **{addr_display}**")
-                        st.caption(f"📅 {job.job_date}")
-                    
-                    with col2:
-                        st.markdown(f"**${job.total:,.0f}**")
-                        if job.parts > 0:
-                            st.caption(f"Parts: ${job.parts:,.0f}")
-                    
-                    with col3:
-                        if job.is_paid:
-                            if st.button("❌", key=f"unpay_{job.id}", help="Mark as unpaid"):
-                                storage.mark_job_unpaid(job.id)
+                if st.session_state.get(f"editing_{job.id}", False):
+                    render_edit_form(job, "tech")
+                else:
+                    with st.container():
+                        col1, col2, col3, col4, col5 = st.columns([4, 2, 1, 1, 1])
+                        
+                        with col1:
+                            status = "✅" if job.is_paid else "⏳"
+                            addr_display = job.address[:35] + "..." if len(job.address) > 35 else job.address
+                            st.markdown(f"{status} **{addr_display}**")
+                            caption_txt = f"📅 {job.job_date}"
+                            if getattr(job, 'tech_amount', None):
+                                caption_txt += f" | 💰 Tech: ${job.tech_amount:.0f}"
+                            st.caption(caption_txt)
+                        
+                        with col2:
+                            st.markdown(f"**${job.total:,.0f}**")
+                            if job.parts > 0:
+                                st.caption(f"Parts: ${job.parts:,.0f}")
+                        
+                        with col3:
+                            if st.button("✏️", key=f"edit_t_{job.id}", help="Edit job"):
+                                st.session_state[f"editing_{job.id}"] = True
                                 st.rerun()
-                        else:
-                            if st.button("✅", key=f"pay_{job.id}", help="Mark as paid"):
-                                storage.mark_job_paid(job.id)
+                        
+                        with col4:
+                            if job.is_paid:
+                                if st.button("❌", key=f"unpay_{job.id}", help="Mark as unpaid"):
+                                    storage.mark_job_unpaid(job.id)
+                                    st.rerun()
+                            else:
+                                if st.button("✅", key=f"pay_{job.id}", help="Mark as paid"):
+                                    storage.mark_job_paid(job.id)
+                                    st.rerun()
+                        
+                        with col5:
+                            if st.button("🗑️", key=f"del_{job.id}", help="Delete job"):
+                                storage.delete_job(job.id)
                                 st.rerun()
-                    
-                    with col4:
-                        if st.button("🗑️", key=f"del_{job.id}", help="Delete job"):
-                            storage.delete_job(job.id)
-                            st.rerun()
                 
                 st.markdown("---")
             
@@ -937,7 +1115,8 @@ def show_technician_details(tech_id: str):
                     fee=0,
                     cash_amount=cash_amt,
                     cc_amount=cc_amt,
-                    check_amount=check_amt
+                    check_amount=check_amt,
+                    tech_amount=getattr(sj, 'tech_amount', None)
                 )
                 jobs_for_report.append(job)
             
