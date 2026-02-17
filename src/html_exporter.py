@@ -239,7 +239,7 @@ class HTMLReportExporter:
             row = self.ROW_TEMPLATE.format(
                 date=self._format_date(r.job.job_date),
                 address=r.job.address,
-                percent=f"{int(r.job.commission_rate * 100)}%",
+                percent='Custom' if r.job.tech_amount is not None else f"{int(r.job.commission_rate * 100)}%",
                 total=self._format_money(r.job.total, show_zero=True),
                 parts=self._format_money(r.job.parts),
                 cash=self._format_money(r.job.cash_amount),

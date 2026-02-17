@@ -266,7 +266,7 @@ class GoogleSheetsClient:
                 return None
             
             row_num = cell.row
-            headers = worksheet.row_values(1)
+            headers = self._ensure_jobs_headers(worksheet)
             current_row = worksheet.row_values(row_num)
             
             # Build updated row

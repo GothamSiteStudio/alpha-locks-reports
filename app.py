@@ -99,7 +99,9 @@ def _stored_jobs_to_report_jobs(stored_jobs: list[StoredJob], commission_rate: f
             total=sj.total,
             parts=sj.parts,
             payment_method=sj.payment_method,
-            commission_rate=commission_rate,
+            commission_rate=(getattr(sj, 'commission_rate', None)
+                             if getattr(sj, 'commission_rate', None) is not None
+                             else commission_rate),
             fee=0,
             cash_amount=cash_amt,
             cc_amount=cc_amt,
@@ -126,7 +128,7 @@ def _build_report_signature(
         f"{commission_rate:.4f}",
     ]
     parts.extend(
-        f"{j.id}:{j.job_date}:{j.total}:{j.parts}:{int(j.is_paid)}:{getattr(j, 'tech_amount', None)}"
+        f"{j.id}:{j.job_date}:{j.total}:{j.parts}:{int(j.is_paid)}:{getattr(j, 'commission_rate', None)}:{getattr(j, 'tech_amount', None)}"
         for j in report_jobs
     )
     return "|".join(parts)
@@ -1244,12 +1246,21 @@ def show_technician_details(
             st.warning("No jobs found for selected criteria.")
         else:
             st.success(f"📋 Found **{len(report_jobs)}** jobs for report")
+
+            jobs_for_report = _stored_jobs_to_report_jobs(report_jobs, commission_rate)
+            preview_generator = ReportGenerator(Technician(
+                id=tech['id'],
+                name=tech['name'],
+                commission_rate=commission_rate
+            ))
+            preview_generator.add_jobs(jobs_for_report)
+            summary = preview_generator.calculator.calculate_summary(preview_generator.results)
             
             # Summary
-            total_sales = sum(j.total for j in report_jobs)
-            total_parts = sum(j.parts for j in report_jobs)
+            total_sales = summary['total_sales']
+            total_parts = summary['total_parts']
             net = total_sales - total_parts
-            tech_profit = net * commission_rate
+            tech_profit = summary['total_tech_profit']
             
             col1, col2, col3 = st.columns(3)
             with col1:
@@ -1260,8 +1271,6 @@ def show_technician_details(
                 st.metric("Tech Profit", f"${tech_profit:,.0f}")
             
             st.markdown("---")
-            
-            jobs_for_report = _stored_jobs_to_report_jobs(report_jobs, commission_rate)
             
             technician_obj = Technician(
                 id=tech['id'],

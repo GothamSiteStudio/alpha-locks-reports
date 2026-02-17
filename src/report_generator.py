@@ -40,7 +40,7 @@ class ReportGenerator:
             data.append({
                 'Date': r.job.job_date.strftime('%d/%m/%Y') if r.job.job_date else '',
                 'Address': r.job.address,
-                '%': f"{int(r.job.commission_rate * 100)}%",
+                '%': 'Custom' if r.job.tech_amount is not None else f"{int(r.job.commission_rate * 100)}%",
                 'Total': f"${r.job.total:,.2f}",
                 'Parts': f"${r.job.parts:,.2f}" if r.job.parts > 0 else '',
                 'Cash': f"${r.job.cash_amount:,.2f}" if r.job.cash_amount > 0 else '',
