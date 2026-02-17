@@ -317,10 +317,13 @@ def render_edit_form(job, key_prefix: str):
                     updates['technician_id'] = tech_obj['id']
                     updates['technician_name'] = tech_obj['name']
                 
-                storage.update_job(job.id, updates)
-                st.session_state[f"editing_{job.id}"] = False
-                st.success("✅ Job updated!")
-                st.rerun()
+                updated_job = storage.update_job(job.id, updates)
+                if updated_job:
+                    st.session_state[f"editing_{job.id}"] = False
+                    st.success("✅ Job updated!")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to update job. Please try again.")
         with bcol2:
             if st.button("❌ Cancel", key=f"e_cancel_{key_prefix}_{job.id}"):
                 st.session_state[f"editing_{job.id}"] = False

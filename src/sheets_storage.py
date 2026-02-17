@@ -257,43 +257,18 @@ class GoogleSheetsClient:
     
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a job by ID"""
-        worksheet = self.get_worksheet('jobs')
-        
-        # Find the row with this job ID
         try:
-            cell = worksheet.find(job_id, in_column=1)
-            if not cell:
+            if not job_id or not updates:
                 return None
-            
-            row_num = cell.row
-            headers = self._ensure_jobs_headers(worksheet)
-            current_row = worksheet.row_values(row_num)
-            
-            # Build updated row
-            updated_data = {}
-            for i, header in enumerate(headers):
-                if i < len(current_row):
-                    updated_data[header] = current_row[i]
-                else:
-                    updated_data[header] = ''
-            
-            # Apply updates
-            updated_data.update(updates)
-            
-            # Convert types for sheets
-            new_row = []
-            for header in headers:
-                value = updated_data.get(header, '')
-                if isinstance(value, bool):
-                    value = str(value).lower()
-                if value is None:
-                    value = ''
-                new_row.append(value)
-            
-            # Update the row
-            worksheet.update(f'A{row_num}', [new_row])
-            
-            return updated_data
+
+            updated_count = self.update_jobs({str(job_id): updates})
+            if updated_count == 0:
+                return None
+
+            for record in self.get_all_jobs():
+                if str(record.get('id')) == str(job_id):
+                    return record
+            return None
         except Exception as e:
             print(f"Error updating job: {e}")
             return None
