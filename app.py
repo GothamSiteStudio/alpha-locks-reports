@@ -80,6 +80,120 @@ def _parsed_job_to_state(pj) -> dict:
     }
 
 
+def _stored_jobs_to_report_jobs(stored_jobs: list[StoredJob], commission_rate: float) -> list[Job]:
+    """Convert StoredJob records into Job models used by report generation."""
+    jobs_for_report: list[Job] = []
+    for sj in stored_jobs:
+        if sj.payment_method == 'split':
+            cash_amt = getattr(sj, 'cash_amount', 0) or 0
+            cc_amt = getattr(sj, 'cc_amount', 0) or 0
+            check_amt = getattr(sj, 'check_amount', 0) or 0
+        else:
+            cash_amt = sj.total if sj.payment_method == 'cash' else 0
+            cc_amt = sj.total if sj.payment_method == 'cc' else 0
+            check_amt = sj.total if sj.payment_method == 'check' else 0
+
+        jobs_for_report.append(Job(
+            job_date=date.fromisoformat(sj.job_date),
+            address=sj.address,
+            total=sj.total,
+            parts=sj.parts,
+            payment_method=sj.payment_method,
+            commission_rate=commission_rate,
+            fee=0,
+            cash_amount=cash_amt,
+            cc_amount=cc_amt,
+            check_amount=check_amt,
+            tech_amount=getattr(sj, 'tech_amount', None)
+        ))
+    return jobs_for_report
+
+
+def _build_report_signature(
+    tech_id: str,
+    report_start: date,
+    report_end: date,
+    include_paid: bool,
+    commission_rate: float,
+    report_jobs: list[StoredJob]
+) -> str:
+    """Build a deterministic signature for export cache invalidation."""
+    parts = [
+        tech_id,
+        report_start.isoformat(),
+        report_end.isoformat(),
+        str(include_paid),
+        f"{commission_rate:.4f}",
+    ]
+    parts.extend(
+        f"{j.id}:{j.job_date}:{j.total}:{j.parts}:{int(j.is_paid)}:{getattr(j, 'tech_amount', None)}"
+        for j in report_jobs
+    )
+    return "|".join(parts)
+
+
+def _render_lazy_report_downloads(
+    export_key_prefix: str,
+    filename_prefix: str,
+    technician: Technician,
+    jobs_for_report: list[Job],
+    signature: str
+) -> None:
+    """Render on-demand report generation and download buttons."""
+    sig_key = f"{export_key_prefix}_sig"
+    html_key = f"{export_key_prefix}_html"
+    excel_key = f"{export_key_prefix}_excel"
+
+    if st.session_state.get(sig_key) != signature:
+        st.session_state.pop(html_key, None)
+        st.session_state.pop(excel_key, None)
+        st.session_state[sig_key] = signature
+
+    timestamp = datetime.now().strftime('%Y%m%d')
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.button("📄 Prepare HTML Report", key=f"prep_html_{export_key_prefix}"):
+            html_exporter = HTMLReportExporter(technician)
+            html_exporter.add_jobs(jobs_for_report)
+            st.session_state[html_key] = html_exporter.generate_html()
+
+        html_content = st.session_state.get(html_key)
+        if html_content:
+            st.download_button(
+                label="📄 Download HTML Report",
+                data=html_content,
+                file_name=f"{filename_prefix}_{timestamp}.html",
+                mime="text/html",
+                key=f"dl_html_{export_key_prefix}"
+            )
+
+    with col2:
+        if st.button("📊 Prepare Excel Report", key=f"prep_excel_{export_key_prefix}"):
+            generator = ReportGenerator(technician)
+            generator.add_jobs(jobs_for_report)
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
+                tmp_path = tmp.name
+            generator.export_excel(tmp_path)
+            with open(tmp_path, 'rb') as f:
+                st.session_state[excel_key] = f.read()
+            try:
+                Path(tmp_path).unlink()
+            except Exception:
+                pass
+
+        excel_data = st.session_state.get(excel_key)
+        if excel_data:
+            st.download_button(
+                label="📊 Download Excel Report",
+                data=excel_data,
+                file_name=f"{filename_prefix}_{timestamp}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"dl_excel_{export_key_prefix}"
+            )
+
+
 def render_edit_form(job, key_prefix: str):
     """Render inline edit form for a stored job. Used across all pages."""
     with st.container(border=True):
@@ -415,7 +529,7 @@ Nodi"""
             # Save all jobs button
             st.markdown("---")
             if st.button("💾 Save All Jobs", type="primary"):
-                saved_count = 0
+                jobs_to_save = []
                 for job_data in edited_jobs:
                     tech_name = job_data['technician_name'].strip()
                     
@@ -452,9 +566,12 @@ Nodi"""
                         check_amount=job_data.get('check_amount', 0.0),
                         tech_amount=job_data.get('tech_amount')
                     )
-                    
-                    storage.add_job(stored_job)
-                    saved_count += 1
+                    jobs_to_save.append(stored_job)
+
+                saved_count = 0
+                if jobs_to_save:
+                    storage.add_jobs(jobs_to_save)
+                    saved_count = len(jobs_to_save)
                 
                 if saved_count > 0:
                     st.success(f"✅ Saved {saved_count} jobs!")
@@ -674,8 +791,6 @@ def page_reports():
     st.header("📈 Generate Reports")
     
     technicians = storage.get_all_technicians()
-    all_jobs = storage.get_all_jobs()
-    
     if not technicians:
         st.info("📭 No technicians found. Add some jobs first!")
         return
@@ -726,33 +841,7 @@ def page_reports():
     
     st.success(f"📋 Found {len(tech_jobs)} jobs for **{selected_tech_name}**")
     
-    # Convert StoredJobs to Job model for report generator
-    jobs_for_report = []
-    for sj in tech_jobs:
-        # Use stored split amounts if available, otherwise default based on payment method
-        if sj.payment_method == 'split':
-            cash_amt = getattr(sj, 'cash_amount', 0) or 0
-            cc_amt = getattr(sj, 'cc_amount', 0) or 0
-            check_amt = getattr(sj, 'check_amount', 0) or 0
-        else:
-            cash_amt = sj.total if sj.payment_method == 'cash' else 0
-            cc_amt = sj.total if sj.payment_method == 'cc' else 0
-            check_amt = sj.total if sj.payment_method == 'check' else 0
-        
-        job = Job(
-            job_date=date.fromisoformat(sj.job_date),
-            address=sj.address,
-            total=sj.total,
-            parts=sj.parts,
-            payment_method=sj.payment_method,
-            commission_rate=commission_rate,
-            fee=0,
-            cash_amount=cash_amt,
-            cc_amount=cc_amt,
-            check_amount=check_amt,
-            tech_amount=getattr(sj, 'tech_amount', None)
-        )
-        jobs_for_report.append(job)
+    jobs_for_report = _stored_jobs_to_report_jobs(tech_jobs, commission_rate)
     
     # Create technician and generator
     technician = Technician(
@@ -852,47 +941,22 @@ def page_reports():
     # Download buttons
     st.markdown("---")
     st.markdown("### 📥 Download Report")
-    
-    # Generate HTML report
-    html_exporter = HTMLReportExporter(technician)
-    html_exporter.add_jobs(jobs_for_report)
-    html_content = html_exporter.generate_html()
-    
-    timestamp = datetime.now().strftime('%Y%m%d')
-    html_filename = f"{selected_tech_name.replace(' ', '_')}_{timestamp}.html"
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.download_button(
-            label="📄 Download HTML Report",
-            data=html_content,
-            file_name=html_filename,
-            mime="text/html"
-        )
-    
-    with col2:
-        # Generate Excel file
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            tmp_path = tmp.name
-        
-        generator.export_excel(tmp_path)
-        with open(tmp_path, 'rb') as f:
-            excel_data = f.read()
-        
-        try:
-            Path(tmp_path).unlink()
-        except:
-            pass
-        
-        excel_filename = f"{selected_tech_name.replace(' ', '_')}_{timestamp}.xlsx"
-        
-        st.download_button(
-            label="📊 Download Excel Report",
-            data=excel_data,
-            file_name=excel_filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+
+    export_signature = _build_report_signature(
+        selected_tech['id'],
+        start_date,
+        end_date,
+        include_paid,
+        commission_rate,
+        tech_jobs,
+    )
+    _render_lazy_report_downloads(
+        export_key_prefix=f"reports_{selected_tech['id']}",
+        filename_prefix=selected_tech_name.replace(' ', '_'),
+        technician=technician,
+        jobs_for_report=jobs_for_report,
+        signature=export_signature,
+    )
     
     # Option to mark jobs as paid after generating report
     st.markdown("---")
@@ -1140,33 +1204,7 @@ def show_technician_details(tech_id: str):
             
             st.markdown("---")
             
-            # Convert to Job model for report
-            jobs_for_report = []
-            for sj in report_jobs:
-                # Use stored split amounts if available, otherwise default based on payment method
-                if sj.payment_method == 'split':
-                    cash_amt = getattr(sj, 'cash_amount', 0) or 0
-                    cc_amt = getattr(sj, 'cc_amount', 0) or 0
-                    check_amt = getattr(sj, 'check_amount', 0) or 0
-                else:
-                    cash_amt = sj.total if sj.payment_method == 'cash' else 0
-                    cc_amt = sj.total if sj.payment_method == 'cc' else 0
-                    check_amt = sj.total if sj.payment_method == 'check' else 0
-                
-                job = Job(
-                    job_date=date.fromisoformat(sj.job_date),
-                    address=sj.address,
-                    total=sj.total,
-                    parts=sj.parts,
-                    payment_method=sj.payment_method,
-                    commission_rate=commission_rate,
-                    fee=0,
-                    cash_amount=cash_amt,
-                    cc_amount=cc_amt,
-                    check_amount=check_amt,
-                    tech_amount=getattr(sj, 'tech_amount', None)
-                )
-                jobs_for_report.append(job)
+            jobs_for_report = _stored_jobs_to_report_jobs(report_jobs, commission_rate)
             
             technician_obj = Technician(
                 id=tech['id'],
@@ -1174,44 +1212,21 @@ def show_technician_details(tech_id: str):
                 commission_rate=commission_rate
             )
             
-            # Generate reports
-            html_exporter = HTMLReportExporter(technician_obj)
-            html_exporter.add_jobs(jobs_for_report)
-            html_content = html_exporter.generate_html()
-            
-            timestamp = datetime.now().strftime('%Y%m%d')
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label="📄 Download HTML Report",
-                    data=html_content,
-                    file_name=f"{tech['name'].replace(' ', '_')}_{timestamp}.html",
-                    mime="text/html",
-                    key=f"dl_html_{tech_id}"
-                )
-            
-            with col2:
-                generator = ReportGenerator(technician_obj)
-                generator.add_jobs(jobs_for_report)
-                
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-                    tmp_path = tmp.name
-                generator.export_excel(tmp_path)
-                with open(tmp_path, 'rb') as f:
-                    excel_data = f.read()
-                try:
-                    Path(tmp_path).unlink()
-                except:
-                    pass
-                
-                st.download_button(
-                    label="📊 Download Excel Report",
-                    data=excel_data,
-                    file_name=f"{tech['name'].replace(' ', '_')}_{timestamp}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_excel_{tech_id}"
-                )
+            export_signature = _build_report_signature(
+                tech['id'],
+                report_start,
+                report_end,
+                include_paid_report,
+                commission_rate,
+                report_jobs,
+            )
+            _render_lazy_report_downloads(
+                export_key_prefix=f"tech_report_{tech_id}",
+                filename_prefix=tech['name'].replace(' ', '_'),
+                technician=technician_obj,
+                jobs_for_report=jobs_for_report,
+                signature=export_signature,
+            )
             
             st.markdown("---")
             

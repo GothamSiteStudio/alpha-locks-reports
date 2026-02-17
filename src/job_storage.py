@@ -234,7 +234,7 @@ class JobStorage:
         
         if self._use_sheets:
             try:
-                self._sheets_client.add_job(job.to_dict())
+                self._sheets_client.add_jobs([job.to_dict()])
                 self._invalidate_jobs_cache()
                 return job
             except Exception as e:
@@ -314,13 +314,11 @@ class JobStorage:
             return 0
         paid_date = datetime.now().isoformat()
         if self._use_sheets:
-            count = 0
-            for jid in job_ids:
-                try:
-                    self._sheets_client.update_job(jid, {'is_paid': True, 'paid_date': paid_date})
-                    count += 1
-                except Exception:
-                    pass
+            updates_by_id = {
+                jid: {'is_paid': True, 'paid_date': paid_date}
+                for jid in job_ids
+            }
+            count = self._sheets_client.update_jobs(updates_by_id)
             self._invalidate_jobs_cache()
             return count
         else:
@@ -343,13 +341,11 @@ class JobStorage:
         if not job_ids:
             return 0
         if self._use_sheets:
-            count = 0
-            for jid in job_ids:
-                try:
-                    self._sheets_client.update_job(jid, {'is_paid': False, 'paid_date': None})
-                    count += 1
-                except Exception:
-                    pass
+            updates_by_id = {
+                jid: {'is_paid': False, 'paid_date': None}
+                for jid in job_ids
+            }
+            count = self._sheets_client.update_jobs(updates_by_id)
             self._invalidate_jobs_cache()
             return count
         else:

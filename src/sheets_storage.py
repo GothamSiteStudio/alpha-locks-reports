@@ -22,6 +22,13 @@ SCOPES = [
 # Sheet ID from your Google Sheet URL
 SHEET_ID = "1yB80SogQbQCs0n2snHt6rQJ50qhY5Adggd3sqpEHylE"
 
+JOB_HEADERS = [
+    'id', 'technician_id', 'technician_name', 'address', 'total',
+    'parts', 'payment_method', 'description', 'phone', 'job_date',
+    'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes',
+    'cash_amount', 'cc_amount', 'check_amount', 'tech_amount'
+]
+
 
 class GoogleSheetsClient:
     """Client for interacting with Google Sheets"""
@@ -88,6 +95,20 @@ class GoogleSheetsClient:
             return self.spreadsheet.worksheet(name)
         except gspread.WorksheetNotFound:
             return self.spreadsheet.add_worksheet(title=name, rows=1000, cols=20)
+
+    def _ensure_jobs_headers(self, worksheet) -> List[str]:
+        """Ensure jobs worksheet has all required columns and return headers."""
+        headers = worksheet.row_values(1)
+        if not headers:
+            worksheet.update('A1', [JOB_HEADERS])
+            return JOB_HEADERS.copy()
+
+        missing = [h for h in JOB_HEADERS if h not in headers]
+        if missing:
+            headers.extend(missing)
+            worksheet.update('A1', [headers])
+
+        return headers
     
     # ============ JOBS ============
     
@@ -95,6 +116,7 @@ class GoogleSheetsClient:
         """Get all jobs from the sheet"""
         try:
             worksheet = self.get_worksheet('jobs')
+            self._ensure_jobs_headers(worksheet)
             records = worksheet.get_all_records()
             
             # Convert types
@@ -111,6 +133,16 @@ class GoogleSheetsClient:
                     else:
                         # Field doesn't exist in sheet - add default
                         record[field] = 0.0
+
+                # tech_amount is optional; keep None when missing/empty
+                tech_amount_raw = record.get('tech_amount', '')
+                if tech_amount_raw in ('', None):
+                    record['tech_amount'] = None
+                else:
+                    try:
+                        record['tech_amount'] = float(tech_amount_raw)
+                    except (ValueError, TypeError):
+                        record['tech_amount'] = None
                 
                 # Convert boolean
                 if 'is_paid' in record:
@@ -129,45 +161,13 @@ class GoogleSheetsClient:
     
     def add_job(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
         """Add a new job to the sheet"""
-        worksheet = self.get_worksheet('jobs')
-        
-        # Get headers
-        headers = worksheet.row_values(1)
-        if not headers:
-            headers = ['id', 'technician_id', 'technician_name', 'address', 'total', 
-                      'parts', 'payment_method', 'description', 'phone', 'job_date',
-                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes',
-                      'cash_amount', 'cc_amount', 'check_amount']
-            worksheet.update('A1', [headers])
-        
-        # Prepare row data
-        row = []
-        for header in headers:
-            value = job_data.get(header, '')
-            # Convert boolean to string for sheets
-            if isinstance(value, bool):
-                value = str(value).lower()
-            # Convert None to empty string
-            if value is None:
-                value = ''
-            row.append(value)
-        
-        # Append row
-        worksheet.append_row(row, value_input_option='USER_ENTERED')
+        self.add_jobs([job_data])
         return job_data
     
     def add_jobs(self, jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Add multiple jobs at once"""
         worksheet = self.get_worksheet('jobs')
-        
-        # Get headers
-        headers = worksheet.row_values(1)
-        if not headers:
-            headers = ['id', 'technician_id', 'technician_name', 'address', 'total', 
-                      'parts', 'payment_method', 'description', 'phone', 'job_date',
-                      'created_at', 'is_paid', 'paid_date', 'commission_rate', 'notes',
-                      'cash_amount', 'cc_amount', 'check_amount']
-            worksheet.update('A1', [headers])
+        headers = self._ensure_jobs_headers(worksheet)
         
         # Prepare all rows
         rows = []
@@ -187,6 +187,60 @@ class GoogleSheetsClient:
             worksheet.append_rows(rows, value_input_option='USER_ENTERED')
         
         return jobs
+
+    def update_jobs(self, updates_by_id: Dict[str, Dict[str, Any]]) -> int:
+        """Batch update multiple jobs by ID using a single sheet batch request."""
+        if not updates_by_id:
+            return 0
+
+        worksheet = self.get_worksheet('jobs')
+
+        try:
+            headers = self._ensure_jobs_headers(worksheet)
+            all_values = worksheet.get_all_values()
+            if len(all_values) <= 1:
+                return 0
+
+            batch_payload = []
+            updated_count = 0
+
+            for row_idx, row_values in enumerate(all_values[1:], start=2):
+                if not row_values:
+                    continue
+
+                job_id = row_values[0] if len(row_values) > 0 else ''
+                updates = updates_by_id.get(job_id)
+                if not updates:
+                    continue
+
+                row_data = {}
+                for i, header in enumerate(headers):
+                    row_data[header] = row_values[i] if i < len(row_values) else ''
+
+                row_data.update(updates)
+
+                new_row = []
+                for header in headers:
+                    value = row_data.get(header, '')
+                    if isinstance(value, bool):
+                        value = str(value).lower()
+                    if value is None:
+                        value = ''
+                    new_row.append(value)
+
+                batch_payload.append({
+                    'range': f'A{row_idx}',
+                    'values': [new_row]
+                })
+                updated_count += 1
+
+            if batch_payload:
+                worksheet.batch_update(batch_payload, value_input_option='USER_ENTERED')
+
+            return updated_count
+        except Exception as e:
+            print(f"Error batch updating jobs: {e}")
+            return 0
     
     def update_job(self, job_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Update a job by ID"""
