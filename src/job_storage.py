@@ -87,10 +87,13 @@ def _use_google_sheets() -> bool:
 # ============ CACHING HELPERS ============
 
 # Cache version counters - incrementing these invalidates the cache
-if '_cache_version_jobs' not in st.session_state:
-    st.session_state._cache_version_jobs = 0
-if '_cache_version_techs' not in st.session_state:
-    st.session_state._cache_version_techs = 0
+def _ensure_cache_versions() -> None:
+    """Ensure cache version keys exist for the active Streamlit session."""
+    st.session_state.setdefault('_cache_version_jobs', 0)
+    st.session_state.setdefault('_cache_version_techs', 0)
+
+
+_ensure_cache_versions()
 
 
 @st.cache_data(ttl=120, show_spinner="📂 Loading jobs...")
@@ -168,18 +171,21 @@ class JobStorage:
     
     def _invalidate_jobs_cache(self):
         """Increment the jobs cache version to force a refresh on next read."""
-        st.session_state._cache_version_jobs += 1
+        _ensure_cache_versions()
+        st.session_state['_cache_version_jobs'] += 1
     
     def _invalidate_techs_cache(self):
         """Increment the technicians cache version to force a refresh on next read."""
-        st.session_state._cache_version_techs += 1
+        _ensure_cache_versions()
+        st.session_state['_cache_version_techs'] += 1
     
     # ============ JOBS ============
     
     def get_all_jobs(self) -> List[StoredJob]:
         """Get all stored jobs (cached - avoids redundant API calls)"""
+        _ensure_cache_versions()
         raw = _cached_get_all_jobs(
-            st.session_state._cache_version_jobs,
+            st.session_state['_cache_version_jobs'],
             self._use_sheets,
             str(self.jobs_file)
         )
@@ -400,8 +406,9 @@ class JobStorage:
     
     def get_all_technicians(self) -> List[Dict[str, Any]]:
         """Get all technicians (cached - avoids redundant API calls)"""
+        _ensure_cache_versions()
         return _cached_get_all_technicians(
-            st.session_state._cache_version_techs,
+            st.session_state['_cache_version_techs'],
             self._use_sheets,
             str(self.technicians_file)
         )
