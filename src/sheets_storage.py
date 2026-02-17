@@ -109,6 +109,15 @@ class GoogleSheetsClient:
             worksheet.update('A1', [headers])
 
         return headers
+
+    @staticmethod
+    def _rowcol_to_a1(row: int, col: int) -> str:
+        """Convert 1-based row/col into A1 notation."""
+        letters = ""
+        while col > 0:
+            col, remainder = divmod(col - 1, 26)
+            letters = chr(65 + remainder) + letters
+        return f"{letters}{row}"
     
     # ============ JOBS ============
     
@@ -197,42 +206,46 @@ class GoogleSheetsClient:
 
         try:
             headers = self._ensure_jobs_headers(worksheet)
-            all_values = worksheet.get_all_values()
-            if len(all_values) <= 1:
+            if len(headers) == 0:
                 return 0
+
+            header_col_index = {header: idx + 1 for idx, header in enumerate(headers)}
+            id_col_values = worksheet.col_values(1)
+            if len(id_col_values) <= 1:
+                return 0
+
+            row_by_id = {}
+            for row_idx, job_id in enumerate(id_col_values[1:], start=2):
+                if job_id:
+                    row_by_id[job_id] = row_idx
 
             batch_payload = []
             updated_count = 0
 
-            for row_idx, row_values in enumerate(all_values[1:], start=2):
-                if not row_values:
+            for job_id, updates in updates_by_id.items():
+                row_idx = row_by_id.get(str(job_id))
+                if not row_idx or not updates:
                     continue
 
-                job_id = row_values[0] if len(row_values) > 0 else ''
-                updates = updates_by_id.get(job_id)
-                if not updates:
-                    continue
+                touched = False
+                for field, value in updates.items():
+                    col_idx = header_col_index.get(field)
+                    if not col_idx:
+                        continue
 
-                row_data = {}
-                for i, header in enumerate(headers):
-                    row_data[header] = row_values[i] if i < len(row_values) else ''
-
-                row_data.update(updates)
-
-                new_row = []
-                for header in headers:
-                    value = row_data.get(header, '')
                     if isinstance(value, bool):
                         value = str(value).lower()
                     if value is None:
                         value = ''
-                    new_row.append(value)
 
-                batch_payload.append({
-                    'range': f'A{row_idx}',
-                    'values': [new_row]
-                })
-                updated_count += 1
+                    batch_payload.append({
+                        'range': self._rowcol_to_a1(row_idx, col_idx),
+                        'values': [[value]]
+                    })
+                    touched = True
+
+                if touched:
+                    updated_count += 1
 
             if batch_payload:
                 worksheet.batch_update(batch_payload, value_input_option='USER_ENTERED')
