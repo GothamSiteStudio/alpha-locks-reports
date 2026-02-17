@@ -19,6 +19,17 @@ from config import COMPANY_NAME, DEFAULT_COMMISSION_RATE
 from auth_config import verify_password
 
 
+def _bootstrap_session_state() -> None:
+    """Initialize required session state keys for every user session."""
+    st.session_state.setdefault('authenticated', False)
+    st.session_state.setdefault('username', None)
+    st.session_state.setdefault('_cache_version_jobs', 0)
+    st.session_state.setdefault('_cache_version_techs', 0)
+
+
+_bootstrap_session_state()
+
+
 # Initialize storage (cached across reruns)
 @st.cache_resource
 def _get_storage():
@@ -1214,9 +1225,7 @@ def show_technician_details(tech_id: str):
 
 
 def main():
-    # Check authentication
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
+    _bootstrap_session_state()
     
     if not st.session_state.authenticated:
         login_page()
