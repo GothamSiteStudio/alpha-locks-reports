@@ -194,6 +194,39 @@ def _render_lazy_report_downloads(
             )
 
 
+def _build_technician_views(all_jobs: list[StoredJob]) -> tuple[dict[str, list[StoredJob]], dict[str, dict]]:
+    """Build per-technician job lists and stats from one jobs scan."""
+    jobs_by_tech: dict[str, list[StoredJob]] = {}
+    stats_by_tech: dict[str, dict] = {}
+
+    for job in all_jobs:
+        tech_jobs = jobs_by_tech.setdefault(job.technician_id, [])
+        tech_jobs.append(job)
+
+        stats = stats_by_tech.setdefault(job.technician_id, {
+            'total_jobs': 0,
+            'paid_jobs': 0,
+            'unpaid_jobs': 0,
+            'total_sales': 0.0,
+            'total_parts': 0.0,
+            'unpaid_amount': 0.0,
+        })
+
+        stats['total_jobs'] += 1
+        stats['total_sales'] += float(job.total)
+        stats['total_parts'] += float(job.parts)
+        if job.is_paid:
+            stats['paid_jobs'] += 1
+        else:
+            stats['unpaid_jobs'] += 1
+            stats['unpaid_amount'] += float(job.total - job.parts)
+
+    for tech_jobs in jobs_by_tech.values():
+        tech_jobs.sort(key=lambda x: x.job_date, reverse=True)
+
+    return jobs_by_tech, stats_by_tech
+
+
 def render_edit_form(job, key_prefix: str):
     """Render inline edit form for a stored job. Used across all pages."""
     with st.container(border=True):
@@ -803,7 +836,10 @@ def page_reports():
         options=[t['name'] for t in technicians]
     )
     
-    selected_tech = storage.get_technician_by_name(selected_tech_name)
+    selected_tech = next((t for t in technicians if t['name'] == selected_tech_name), None)
+    if not selected_tech:
+        st.error("Selected technician not found")
+        return
     
     st.sidebar.markdown("#### Date Range")
     col1, col2 = st.sidebar.columns(2)
@@ -973,6 +1009,8 @@ def page_technicians():
     st.header("👥 Technicians")
     
     technicians = storage.get_all_technicians()
+    all_jobs = storage.get_all_jobs()
+    jobs_by_tech, stats_by_tech = _build_technician_views(all_jobs)
     
     if not technicians:
         st.info("📭 No technicians yet. They will be auto-created when you add jobs.")
@@ -989,7 +1027,14 @@ def page_technicians():
         st.markdown("### 📋 Technicians List")
         
         for tech in technicians:
-            stats = storage.get_technician_stats(tech['id'])
+            stats = stats_by_tech.get(tech['id'], {
+                'total_jobs': 0,
+                'paid_jobs': 0,
+                'unpaid_jobs': 0,
+                'total_sales': 0.0,
+                'total_parts': 0.0,
+                'unpaid_amount': 0.0,
+            })
             
             # Create a button for each technician
             is_selected = st.session_state.selected_tech_id == tech['id']
@@ -1031,20 +1076,32 @@ def page_technicians():
     
     with col_details:
         if st.session_state.selected_tech_id:
-            show_technician_details(st.session_state.selected_tech_id)
+            selected_id = st.session_state.selected_tech_id
+            selected_tech = next((t for t in technicians if t['id'] == selected_id), None)
+            show_technician_details(
+                selected_id,
+                tech=selected_tech,
+                jobs=jobs_by_tech.get(selected_id, []),
+                stats=stats_by_tech.get(selected_id)
+            )
         else:
             st.info("👈 Select a technician to view details")
 
 
-def show_technician_details(tech_id: str):
+def show_technician_details(
+    tech_id: str,
+    tech: dict | None = None,
+    jobs: list[StoredJob] | None = None,
+    stats: dict | None = None,
+):
     """Show detailed view for a technician"""
-    tech = storage.get_technician_by_id(tech_id)
+    tech = tech or storage.get_technician_by_id(tech_id)
     if not tech:
         st.error("Technician not found")
         return
-    
-    stats = storage.get_technician_stats(tech_id)
-    jobs = storage.get_jobs_by_technician(tech_id)
+
+    jobs = jobs if jobs is not None else storage.get_jobs_by_technician(tech_id)
+    stats = stats or storage.get_technician_stats(tech_id)
     
     # Header with technician name
     st.markdown(f"## 👤 {tech['name']}")
