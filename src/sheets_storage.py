@@ -118,6 +118,40 @@ class GoogleSheetsClient:
             col, remainder = divmod(col - 1, 26)
             letters = chr(65 + remainder) + letters
         return f"{letters}{row}"
+
+    @staticmethod
+    def _normalize_job_record(record: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize worksheet values into app-friendly job types."""
+        numeric_fields = ['total', 'parts', 'commission_rate', 'cash_amount', 'cc_amount', 'check_amount']
+
+        for field in numeric_fields:
+            raw = record.get(field, '')
+            if raw in ('', None):
+                record[field] = 0.0
+            else:
+                try:
+                    record[field] = float(raw)
+                except (ValueError, TypeError):
+                    record[field] = 0.0
+
+        # tech_amount is optional and should remain None when missing/empty
+        tech_amount_raw = record.get('tech_amount', '')
+        if tech_amount_raw in ('', None):
+            record['tech_amount'] = None
+        else:
+            try:
+                record['tech_amount'] = float(tech_amount_raw)
+            except (ValueError, TypeError):
+                record['tech_amount'] = None
+
+        record['is_paid'] = str(record.get('is_paid', '')).lower() in ('true', '1', 'yes')
+
+        if record.get('paid_date', '') in ('', None):
+            record['paid_date'] = None
+        if record.get('notes', None) is None:
+            record['notes'] = ''
+
+        return record
     
     # ============ JOBS ============
     
@@ -127,43 +161,7 @@ class GoogleSheetsClient:
             worksheet = self.get_worksheet('jobs')
             self._ensure_jobs_headers(worksheet)
             records = worksheet.get_all_records()
-            
-            # Convert types
-            for record in records:
-                # Convert numeric fields
-                for field in ['total', 'parts', 'commission_rate', 'cash_amount', 'cc_amount', 'check_amount']:
-                    if field in record and record[field] != '':
-                        try:
-                            record[field] = float(record[field])
-                        except (ValueError, TypeError):
-                            record[field] = 0.0
-                    elif field in record:
-                        record[field] = 0.0
-                    else:
-                        # Field doesn't exist in sheet - add default
-                        record[field] = 0.0
-
-                # tech_amount is optional; keep None when missing/empty
-                tech_amount_raw = record.get('tech_amount', '')
-                if tech_amount_raw in ('', None):
-                    record['tech_amount'] = None
-                else:
-                    try:
-                        record['tech_amount'] = float(tech_amount_raw)
-                    except (ValueError, TypeError):
-                        record['tech_amount'] = None
-                
-                # Convert boolean
-                if 'is_paid' in record:
-                    record['is_paid'] = str(record['is_paid']).lower() in ('true', '1', 'yes')
-                
-                # Handle None values
-                if 'paid_date' in record and record['paid_date'] == '':
-                    record['paid_date'] = None
-                if 'notes' not in record:
-                    record['notes'] = ''
-            
-            return records
+            return [self._normalize_job_record(record) for record in records]
         except Exception as e:
             print(f"Error getting jobs: {e}")
             return []
@@ -261,14 +259,44 @@ class GoogleSheetsClient:
             if not job_id or not updates:
                 return None
 
-            updated_count = self.update_jobs({str(job_id): updates})
-            if updated_count == 0:
+            worksheet = self.get_worksheet('jobs')
+            headers = self._ensure_jobs_headers(worksheet)
+            if len(headers) == 0:
                 return None
 
-            for record in self.get_all_jobs():
-                if str(record.get('id')) == str(job_id):
-                    return record
-            return None
+            cell = worksheet.find(str(job_id), in_column=1)
+            if not cell:
+                return None
+
+            row_num = cell.row
+            header_col_index = {header: idx + 1 for idx, header in enumerate(headers)}
+
+            current_row = worksheet.row_values(row_num)
+            updated_record: Dict[str, Any] = {}
+            for idx, header in enumerate(headers):
+                updated_record[header] = current_row[idx] if idx < len(current_row) else ''
+
+            batch_payload = []
+            for field, value in updates.items():
+                col_idx = header_col_index.get(field)
+                if not col_idx:
+                    continue
+
+                if isinstance(value, bool):
+                    value = str(value).lower()
+                if value is None:
+                    value = ''
+
+                batch_payload.append({
+                    'range': self._rowcol_to_a1(row_num, col_idx),
+                    'values': [[value]]
+                })
+                updated_record[field] = value
+
+            if batch_payload:
+                worksheet.batch_update(batch_payload, value_input_option='USER_ENTERED')
+
+            return self._normalize_job_record(updated_record)
         except Exception as e:
             print(f"Error updating job: {e}")
             return None
